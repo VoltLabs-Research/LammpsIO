@@ -501,7 +501,17 @@
     "v8_enable_v8_checks": 0,
     "nodedir": "/home/rodyherrera/.cache/node-gyp/25.7.0",
     "python": "/usr/bin/python3",
-    "standalone_static_library": 1
+    "standalone_static_library": 1,
+    "user_agent": "npm/11.10.1 node/v25.7.0 linux x64 workspaces/false",
+    "userconfig": "/home/rodyherrera/.npmrc",
+    "local_prefix": "/home/rodyherrera/Desktop/voltlabs-ecosystem/tools/LammpsIO",
+    "prefix": "/home/rodyherrera/.nvm/versions/node/v25.7.0",
+    "npm_version": "11.10.1",
+    "cache": "/home/rodyherrera/.npm",
+    "node_gyp": "/home/rodyherrera/.nvm/versions/node/v25.7.0/lib/node_modules/npm/node_modules/node-gyp/bin/node-gyp.js",
+    "globalconfig": "/home/rodyherrera/.nvm/versions/node/v25.7.0/etc/npmrc",
+    "init_module": "/home/rodyherrera/.npm-init.js",
+    "global_prefix": "/home/rodyherrera/.nvm/versions/node/v25.7.0"
   },
   "target_defaults": {
     "include_dirs": [],
