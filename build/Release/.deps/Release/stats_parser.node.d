@@ -1,0 +1,1 @@
+cmd_Release/stats_parser.node := ln -f "Release/obj.target/stats_parser.node" "Release/stats_parser.node" 2>/dev/null || (rm -rf "Release/stats_parser.node" && cp -af "Release/obj.target/stats_parser.node" "Release/stats_parser.node")

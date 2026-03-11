@@ -1,0 +1,1 @@
+cmd_Release/obj.target/data_parser.node := g++ -o Release/obj.target/data_parser.node -shared -pthread -rdynamic -m64  -Wl,-soname=data_parser.node -Wl,--start-group Release/obj.target/data_parser/src/data_parser.o -Wl,--end-group 

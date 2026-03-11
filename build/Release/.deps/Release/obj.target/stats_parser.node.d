@@ -1,0 +1,1 @@
+cmd_Release/obj.target/stats_parser.node := g++ -o Release/obj.target/stats_parser.node -shared -pthread -rdynamic -m64  -Wl,-soname=stats_parser.node -Wl,--start-group Release/obj.target/stats_parser/src/stats_parser.o -Wl,--end-group 

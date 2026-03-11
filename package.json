@@ -1,0 +1,20 @@
+{
+  "name": "@volt/lammps-io",
+  "version": "1.0.0",
+  "description": "Native Node.js addons for LAMMPS parsing workloads.",
+  "private": false,
+  "gypfile": true,
+  "main": "index.js",
+  "type": "commonjs",
+  "files": [
+    "binding.gyp",
+    "index.js",
+    "src/**/*"
+  ],
+  "scripts": {
+    "install": "node-gyp rebuild"
+  },
+  "devDependencies": {
+    "node-gyp": "^10.0.0"
+  }
+}
