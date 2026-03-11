@@ -1,5 +1,5 @@
 {
-  "name": "@volt/lammps-io",
+  "name": "@voltstack/lammps-io",
   "version": "1.0.0",
   "description": "Native Node.js addons for LAMMPS parsing workloads.",
   "private": false,
