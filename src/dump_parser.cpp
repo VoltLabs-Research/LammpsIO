@@ -1,6 +1,7 @@
 #include <node_api.h>
 #include <vector>
 #include <string>
+#include <set>
 #include <thread>
 #include <future>
 #include "common.hpp"
@@ -128,7 +129,9 @@ HOT static void parseChunk(
     uint32_t* RESTRICT ids,
     int startIdx,
     const ColumnMapping& cols,
-    WorkerResult* result
+    WorkerResult* result,
+    float** extraProps,
+    int numExtraProps
 ) {
     const char* p = chunkStart;
     int atomIdx = startIdx;
@@ -173,6 +176,14 @@ HOT static void parseChunk(
                 type = fastAtoi(tok, tokEnd);
             } else if (ids && col == cols.idxId) {
                 id = (uint32_t)fastAtoi(tok, tokEnd);
+            }
+            
+            if (numExtraProps > 0) {
+                for (int ep = 0; ep < numExtraProps; ep++) {
+                    if (col == cols.extraPropIndices[ep]) {
+                        extraProps[ep][atomIdx] = (float)fastAtof(tok, tokEnd);
+                    }
+                }
             }
             
             tok = skipWhitespace(tokEnd, lineEnd);
@@ -228,6 +239,7 @@ static napi_value ParseDump(napi_env env, napi_callback_info info) {
     
     // Get options
     bool includeIds = false;
+    std::vector<std::string> requestedProperties;
     if (argc >= 2) {
         napi_value optionsObj = args[1];
         napi_valuetype type;
@@ -236,6 +248,26 @@ static napi_value ParseDump(napi_env env, napi_callback_info info) {
             napi_value val;
             if (napi_get_named_property(env, optionsObj, "includeIds", &val) == napi_ok) {
                 napi_get_value_bool(env, val, &includeIds);
+            }
+            
+            // Read properties array
+            napi_value propsVal;
+            if (napi_get_named_property(env, optionsObj, "properties", &propsVal) == napi_ok) {
+                bool isArray = false;
+                napi_is_array(env, propsVal, &isArray);
+                if (isArray) {
+                    uint32_t arrLen = 0;
+                    napi_get_array_length(env, propsVal, &arrLen);
+                    for (uint32_t i = 0; i < arrLen; i++) {
+                        napi_value elem;
+                        napi_get_element(env, propsVal, i, &elem);
+                        size_t strLen = 0;
+                        napi_get_value_string_utf8(env, elem, nullptr, 0, &strLen);
+                        std::string propName(strLen, '\0');
+                        napi_get_value_string_utf8(env, elem, &propName[0], strLen + 1, &strLen);
+                        requestedProperties.push_back(std::move(propName));
+                    }
+                }
             }
         }
     }
@@ -257,6 +289,40 @@ static napi_value ParseDump(napi_env env, napi_callback_info info) {
         return nullptr;
     }
     
+    // Resolve requested properties to column indices
+    if (!requestedProperties.empty()) {
+        static const std::set<std::string> baseColumns = {"id", "type", "x", "y", "z"};
+        
+        // Handle wildcard: replace "*" with all non-base headers
+        bool hasWildcard = false;
+        for (const auto& rp : requestedProperties) {
+            if (rp == "*") { hasWildcard = true; break; }
+        }
+        if (hasWildcard) {
+            requestedProperties.clear();
+            for (const auto& hdr : meta.headers) {
+                if (baseColumns.find(hdr) == baseColumns.end()) {
+                    requestedProperties.push_back(hdr);
+                }
+            }
+        }
+        
+        // Map each requested property name to its column index
+        for (const auto& propName : requestedProperties) {
+            for (size_t hi = 0; hi < meta.headers.size(); hi++) {
+                if (meta.headers[hi] == propName) {
+                    cols.extraPropIndices.push_back((int)hi);
+                    cols.extraPropNames.push_back(propName);
+                    break;
+                }
+            }
+        }
+        
+        if (!cols.extraPropIndices.empty()) {
+            cols.computeMaxIdx();
+        }
+    }
+    
     // Create output arrays (direct allocation in V8 heap - zero copy to JS)
     napi_value posBuffer, typesBuffer, idsBuffer = nullptr;
     void *posPtr, *typesPtr, *idsPtr = nullptr;
@@ -273,6 +339,22 @@ static napi_value ParseDump(napi_env env, napi_callback_info info) {
         napi_create_typedarray(env, napi_uint32_array, (size_t)meta.atomCount, idsBuffer, 0, &idsArray);
     }
     
+    // Allocate Float32Array buffers for each extra property
+    const int numExtraProps = (int)cols.extraPropIndices.size();
+    std::vector<void*> extraPropPtrs(numExtraProps, nullptr);
+    std::vector<napi_value> extraPropArrays(numExtraProps);
+    for (int i = 0; i < numExtraProps; i++) {
+        napi_value buf;
+        napi_create_arraybuffer(env, (size_t)meta.atomCount * sizeof(float), &extraPropPtrs[i], &buf);
+        napi_create_typedarray(env, napi_float32_array, (size_t)meta.atomCount, buf, 0, &extraPropArrays[i]);
+    }
+    
+    // Prepare extra prop raw pointers for parseChunk
+    std::vector<float*> extraPropRawPtrs(numExtraProps);
+    for (int i = 0; i < numExtraProps; i++) {
+        extraPropRawPtrs[i] = (float*)extraPropPtrs[i];
+    }
+    
     // Multi-threaded parsing
     const char* dataStart = meta.atomsSectionPtr;
     const char* dataEnd = file.data + file.size;
@@ -287,7 +369,9 @@ static napi_value ParseDump(napi_env env, napi_callback_info info) {
         // Single-threaded fast path
         parseChunk(dataStart, dataEnd, dataEnd, 
                    (float*)posPtr, (uint16_t*)typesPtr, (uint32_t*)idsPtr,
-                   0, cols, &results[0]);
+                   0, cols, &results[0],
+                   extraPropRawPtrs.empty() ? nullptr : extraPropRawPtrs.data(),
+                   numExtraProps);
     } else {
         // Split work across threads
         size_t chunkSize = (dataEnd - dataStart) / numThreads;
@@ -320,7 +404,9 @@ static napi_value ParseDump(napi_env env, napi_callback_info info) {
             threads.emplace_back(parseChunk,
                 chunkPtrs[i], chunkPtrs[i+1], dataEnd,
                 (float*)posPtr, (uint16_t*)typesPtr, (uint32_t*)idsPtr,
-                offsets[i], cols, &results[i]);
+                offsets[i], std::cref(cols), &results[i],
+                extraPropRawPtrs.empty() ? nullptr : extraPropRawPtrs.data(),
+                numExtraProps);
         }
         for (auto& t : threads) t.join();
     }
@@ -341,6 +427,16 @@ static napi_value ParseDump(napi_env env, napi_callback_info info) {
     napi_set_named_property(env, result, "positions", posArray);
     napi_set_named_property(env, result, "types", typesArray);
     if (idsPtr) napi_set_named_property(env, result, "ids", idsArray);
+    
+    // Extra properties
+    if (!cols.extraPropNames.empty()) {
+        napi_value propsObj;
+        napi_create_object(env, &propsObj);
+        for (int i = 0; i < numExtraProps; i++) {
+            napi_set_named_property(env, propsObj, cols.extraPropNames[i].c_str(), extraPropArrays[i]);
+        }
+        napi_set_named_property(env, result, "properties", propsObj);
+    }
     
     // Metadata
     napi_value metaObj, boxObj;

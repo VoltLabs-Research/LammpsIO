@@ -4,6 +4,8 @@
 #include <cstring>
 #include <cmath>
 #include <cstdint>
+#include <string>
+#include <vector>
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -157,12 +159,18 @@ struct ColumnMapping {
     int idxZ = -1;
     int maxIdx = 0;
     
+    std::vector<int> extraPropIndices;
+    std::vector<std::string> extraPropNames;
+    
     void computeMaxIdx() {
         maxIdx = idxType;
         if (idxX > maxIdx) maxIdx = idxX;
         if (idxY > maxIdx) maxIdx = idxY;
         if (idxZ > maxIdx) maxIdx = idxZ;
         if (idxId > maxIdx) maxIdx = idxId;
+        for (int idx : extraPropIndices) {
+            if (idx > maxIdx) maxIdx = idx;
+        }
     }
 };
 
