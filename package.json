@@ -1,6 +1,6 @@
 {
   "name": "@voltstack/lammps-io",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Native Node.js addons for LAMMPS parsing workloads.",
   "private": false,
   "gypfile": true,
