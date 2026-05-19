@@ -1,1 +1,0 @@
-cmd_Release/dump_parser.node := ln -f "Release/obj.target/dump_parser.node" "Release/dump_parser.node" 2>/dev/null || (rm -rf "Release/dump_parser.node" && cp -af "Release/obj.target/dump_parser.node" "Release/dump_parser.node")
