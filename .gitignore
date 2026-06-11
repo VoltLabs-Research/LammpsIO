@@ -56,3 +56,4 @@ output/
 *.log
 *.tar.zst
 *.sha256
+CLAUDE.md
