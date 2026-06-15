@@ -82,6 +82,89 @@ struct ParseResult {
     int count;
 };
 
+// One entry per LAMMPS atom type parsed from the `Masses` section, 1-indexed by
+// `type`. `mass` is the per-type mass; `elementHint` is the trailing `# <symbol>`
+// comment LAMMPS data files conventionally carry, or empty when absent.
+struct MassEntry {
+    int type;
+    double mass;
+    std::string elementHint;
+};
+
+// Parse the optional `Masses` section. LAMMPS writes it as:
+//   Masses
+//   <blank>
+//   1 55.845   # Fe
+//   2 12.011   # C
+// Returns rows ordered by appearance; the caller compacts them 1-indexed by type.
+static std::vector<MassEntry> parseMassesSection(const char* RESTRICT data, size_t fileSize) {
+    std::vector<MassEntry> entries;
+    const char* end = data + fileSize;
+
+    // Match the standalone "Masses" header (followed by end-of-line, not a longer word).
+    const char* p = data;
+    const char* massesMarker = nullptr;
+    while (p < end) {
+        const char* lineEnd = findLineEnd(p, end);
+        const char* content = skipWhitespace(p, lineEnd);
+        if (content + 6 <= lineEnd && strncmp(content, "Masses", 6) == 0) {
+            const char* after = skipWhitespace(content + 6, lineEnd);
+            if (after >= lineEnd || *after == '#') {
+                massesMarker = lineEnd + 1;
+                break;
+            }
+        }
+        p = lineEnd + 1;
+    }
+    if (!massesMarker) return entries;
+
+    // Skip blank/comment lines between the header and the first mass row, advancing
+    // line-by-line so `p` lands on the first data line (not stranded on a blank line).
+    p = massesMarker;
+    while (p < end) {
+        const char* lineEnd = findLineEnd(p, end);
+        const char* content = skipWhitespace(p, lineEnd);
+        if (content < lineEnd && *content != '#') break;
+        p = lineEnd + 1;
+    }
+
+    while (p < end) {
+        const char* lineEnd = findLineEnd(p, end);
+        const char* content = skipWhitespace(p, lineEnd);
+
+        if (UNLIKELY(content >= lineEnd)) {
+            // Blank line terminates the section.
+            break;
+        }
+        if (*content == '#') { p = lineEnd + 1; continue; }
+        // A new capital-letter section header ends Masses.
+        if (*content >= 'A' && *content <= 'Z') break;
+
+        const char* tok = content;
+        const char* tokEnd = findTokenEnd(tok, lineEnd);
+        const int type = fastAtoi(tok, tokEnd);
+
+        const char* massTok = skipWhitespace(tokEnd, lineEnd);
+        const char* massEnd = findTokenEnd(massTok, lineEnd);
+        const double mass = fastAtof(massTok, massEnd);
+
+        // Optional trailing "# <symbol>" element hint.
+        std::string elementHint;
+        const char* hashPos = (const char*)memchr(massEnd, '#', lineEnd - massEnd);
+        if (hashPos) {
+            const char* hintStart = skipWhitespace(hashPos + 1, lineEnd);
+            const char* hintEnd = findTokenEnd(hintStart, lineEnd);
+            if (hintEnd > hintStart) elementHint.assign(hintStart, hintEnd - hintStart);
+        }
+
+        if (type > 0) entries.push_back({ type, mass, std::move(elementHint) });
+        p = lineEnd + 1;
+    }
+
+    return entries;
+}
+
+
 HOT static ParseResult parseAtomSection(
     const char* RESTRICT data,
     size_t fileSize,
@@ -245,7 +328,11 @@ static napi_value ParseData(napi_env env, napi_callback_info info) {
         file.data, file.size, meta.atomCount,
         (float*)posPtr, (uint16_t*)typesPtr, (uint32_t*)idsPtr
     );
-    
+
+    // Parse the optional Masses section (per-type mass + element hint). Done after the
+    // atom section so a single mmap covers both; the data file is already resident.
+    std::vector<MassEntry> massEntries = parseMassesSection(file.data, file.size);
+
     unmapFile(file);
     
     if (parsed.count == 0) {
@@ -301,10 +388,49 @@ static napi_value ParseData(napi_env env, napi_callback_info info) {
     
     napi_set_named_property(env, result, "min", minArr);
     napi_set_named_property(env, result, "max", maxArr);
-    
+
     #undef SET_DOUBLE
     #undef SET_INT
-    
+
+    // Per-type Masses section (1-indexed by LAMMPS type). Compact arrays whose index 0
+    // is type 1, so the daemon maps type→element via inferElementFromMass. Emitted only
+    // when a Masses section was present.
+    if (!massEntries.empty()) {
+        int maxType = 0;
+        for (const auto& entry : massEntries) {
+            if (entry.type > maxType) maxType = entry.type;
+        }
+
+        napi_value massesArr, hintsArr;
+        napi_create_array_with_length(env, (size_t)maxType, &massesArr);
+        napi_create_array_with_length(env, (size_t)maxType, &hintsArr);
+
+        // Default-fill: 0 mass, null hint for any type gap.
+        for (int t = 0; t < maxType; t++) {
+            napi_value zero, nul;
+            napi_create_double(env, 0.0, &zero);
+            napi_get_null(env, &nul);
+            napi_set_element(env, massesArr, t, zero);
+            napi_set_element(env, hintsArr, t, nul);
+        }
+
+        for (const auto& entry : massEntries) {
+            const int idx = entry.type - 1;
+            napi_value massVal;
+            napi_create_double(env, entry.mass, &massVal);
+            napi_set_element(env, massesArr, idx, massVal);
+
+            if (!entry.elementHint.empty()) {
+                napi_value hintVal;
+                napi_create_string_utf8(env, entry.elementHint.c_str(), entry.elementHint.size(), &hintVal);
+                napi_set_element(env, hintsArr, idx, hintVal);
+            }
+        }
+
+        napi_set_named_property(env, result, "massesByType", massesArr);
+        napi_set_named_property(env, result, "elementHintsByType", hintsArr);
+    }
+
     return result;
 }
 

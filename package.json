@@ -12,7 +12,8 @@
     "src/**/*"
   ],
   "scripts": {
-    "install": "node-gyp rebuild"
+    "install": "node-gyp rebuild",
+    "test": "node --test"
   },
   "devDependencies": {
     "node-gyp": "^10.0.0"

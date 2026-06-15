@@ -12,11 +12,9 @@
 #include <unistd.h>
 #include "external/fast_float.h"
 
-#define LIKELY(x)   __builtin_expect(!!(x), 1)
 #define UNLIKELY(x) __builtin_expect(!!(x), 0)
 #define ALWAYS_INLINE __attribute__((always_inline)) inline
 #define HOT __attribute__((hot))
-#define PREFETCH(addr) __builtin_prefetch(addr, 0, 3)
 #define RESTRICT __restrict__
 
 struct MappedFile {
@@ -75,7 +73,7 @@ HOT ALWAYS_INLINE double fastAtof(const char* RESTRICT p, const char* RESTRICT e
 
 HOT ALWAYS_INLINE int fastAtoi(const char* RESTRICT p, const char* RESTRICT end) {
     if (UNLIKELY(p >= end)) return 0;
-    
+
     int sign = 1;
     if (*p == '-') {
         sign = -1;
@@ -83,7 +81,7 @@ HOT ALWAYS_INLINE int fastAtoi(const char* RESTRICT p, const char* RESTRICT end)
     } else if (*p == '+') {
         p++;
     }
-    
+
     int result = 0;
     while (p < end) {
         unsigned int d = (unsigned int)(*p - '0');
@@ -91,8 +89,33 @@ HOT ALWAYS_INLINE int fastAtoi(const char* RESTRICT p, const char* RESTRICT end)
         result = result * 10 + d;
         p++;
     }
-    
+
     return sign * result;
+}
+
+// Per-column dtype carried alongside extra dump properties. The daemon maps these
+// strings ('i32'/'f32') straight onto Int32Array/Float32Array, so they must match
+// the shared @voltstack/volt-shared ColumnDType union.
+enum class ColumnDtype { Int32, Float32 };
+
+ALWAYS_INLINE const char* columnDtypeString(ColumnDtype dtype) {
+    return dtype == ColumnDtype::Int32 ? "i32" : "f32";
+}
+
+// True only when the whole token is integer-formatted: an optional sign followed by
+// one or more digits and nothing else. Any '.', 'e'/'E', 'n'/'i' (nan/inf) makes it
+// false. This is the dtype discriminator: a categorical "2" is integer-formatted,
+// a continuous "2.0" is not — value integrality alone cannot tell them apart.
+HOT ALWAYS_INLINE bool isIntegerToken(const char* RESTRICT p, const char* RESTRICT end) {
+    if (UNLIKELY(p >= end)) return false;
+    if (*p == '+' || *p == '-') p++;
+    if (UNLIKELY(p >= end)) return false;
+    while (p < end) {
+        unsigned int d = (unsigned int)(*p - '0');
+        if (d > 9) return false;
+        p++;
+    }
+    return true;
 }
 
 HOT ALWAYS_INLINE const char* skipWhitespace(const char* RESTRICT p, const char* RESTRICT end) {
@@ -149,7 +172,21 @@ struct SimulationBox {
     double xlo, xhi;
     double ylo, yhi;
     double zlo, zhi;
+    // Triclinic tilt factors (0 for orthogonal cells). For scaled-coordinate
+    // dumps these are needed to map fractional positions back to Cartesian.
+    double xy = 0.0, xz = 0.0, yz = 0.0;
 };
+
+// Recognizes exactly the LAMMPS per-atom position column names for one axis:
+// x, xu (unwrapped), xs (scaled), xsu (scaled+unwrapped) — and the y/z forms.
+// `head` points at the axis letter (already known to be x/y/z), `len` is the
+// full token length. Rejects look-alikes like "xy" (a tilt label) or "vx".
+ALWAYS_INLINE bool isPositionColumn(const char* head, size_t len) {
+    if (len == 1) return true;                 // x / y / z
+    if (len == 2) return head[1] == 'u' || head[1] == 's';   // xu / xs
+    if (len == 3) return head[1] == 's' && head[2] == 'u';   // xsu
+    return false;
+}
 
 struct ColumnMapping {
     int idxId = -1;
@@ -158,6 +195,11 @@ struct ColumnMapping {
     int idxY = -1;
     int idxZ = -1;
     int maxIdx = 0;
+    // True when the position columns are LAMMPS *scaled* coordinates (xs/ys/zs),
+    // i.e. fractions of the box in [0,1]. They must be mapped to Cartesian using
+    // the box bounds + tilt factors before use. Unscaled (x/xu/y/yu/z/zu) stay
+    // as-is. All three axes share one flag — LAMMPS never mixes styles.
+    bool scaledCoords = false;
     
     std::vector<int> extraPropIndices;
     std::vector<std::string> extraPropNames;

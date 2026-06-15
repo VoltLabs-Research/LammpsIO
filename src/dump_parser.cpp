@@ -51,23 +51,50 @@ static DumpMetadata parseDumpHeader(const char* RESTRICT data, size_t fileSize, 
                 p = valEnd;
             }
             else if (!(found & 4) && strncmp(content, "BOX BOUNDS", 10) == 0) {
-                // Parse 3 lines of box bounds
+                // Parse 3 lines of box bounds. Triclinic dumps print a third
+                // value per line (the tilt factors xy, xz, yz) and the lo/hi are
+                // the *bounding-box* limits inflated by the tilt; recover the
+                // true box bounds below. Orthogonal dumps have no third token and
+                // tilts stay 0, so the recovery is a no-op.
+                double tiltXY = 0.0, tiltXZ = 0.0, tiltYZ = 0.0;
                 for (int i = 0; i < 3 && p < end; i++) {
                     p = lineEnd + 1;
                     lineEnd = findLineEnd(p, end);
-                    
+
                     const char* bp = skipWhitespace(p, lineEnd);
                     const char* tokEnd = findTokenEnd(bp, lineEnd);
                     double lo = fastAtof(bp, tokEnd);
-                    
+
                     bp = skipWhitespace(tokEnd, lineEnd);
                     tokEnd = findTokenEnd(bp, lineEnd);
                     double hi = fastAtof(bp, tokEnd);
-                    
-                    if (i == 0) { meta.box.xlo = lo; meta.box.xhi = hi; }
-                    else if (i == 1) { meta.box.ylo = lo; meta.box.yhi = hi; }
-                    else { meta.box.zlo = lo; meta.box.zhi = hi; }
+
+                    // Optional third token: the tilt factor for this axis.
+                    bp = skipWhitespace(tokEnd, lineEnd);
+                    double tilt = 0.0;
+                    if (bp < lineEnd) {
+                        tokEnd = findTokenEnd(bp, lineEnd);
+                        tilt = fastAtof(bp, tokEnd);
+                    }
+
+                    if (i == 0) { meta.box.xlo = lo; meta.box.xhi = hi; tiltXY = tilt; }
+                    else if (i == 1) { meta.box.ylo = lo; meta.box.yhi = hi; tiltXZ = tilt; }
+                    else { meta.box.zlo = lo; meta.box.zhi = hi; tiltYZ = tilt; }
                 }
+
+                meta.box.xy = tiltXY;
+                meta.box.xz = tiltXZ;
+                meta.box.yz = tiltYZ;
+
+                // Recover the true (untilted) box edges from the printed bounding
+                // box (LAMMPS dump convention). MIN/MAX over {0, tilts} — a no-op
+                // when all tilts are 0.
+                const double minX = std::min(std::min(0.0, tiltXY), std::min(tiltXZ, tiltXY + tiltXZ));
+                const double maxX = std::max(std::max(0.0, tiltXY), std::max(tiltXZ, tiltXY + tiltXZ));
+                meta.box.xlo -= minX;
+                meta.box.xhi -= maxX;
+                meta.box.ylo -= std::min(0.0, tiltYZ);
+                meta.box.yhi -= std::max(0.0, tiltYZ);
                 found |= 4;
             }
             else if (!(found & 8) && strncmp(content, "ATOMS", 5) == 0) {
@@ -87,10 +114,17 @@ static DumpMetadata parseDumpHeader(const char* RESTRICT data, size_t fileSize, 
                         cols.idxType = colIdx;
                     } else if (len == 2 && c0 == 'i' && hp[1] == 'd') {
                         cols.idxId = colIdx;
-                    } else if (len >= 1 && len <= 2) {
+                    } else if ((c0 == 'x' || c0 == 'y' || c0 == 'z') && isPositionColumn(hp, len)) {
+                        // LAMMPS position styles: x/y/z and xu/yu/zu are Cartesian;
+                        // xs/ys/zs and xsu/ysu/zsu are fractional ([0,1]) and need
+                        // mapping via the box. The 's' right after the axis letter
+                        // marks the scaled styles.
+                        if (len >= 2 && hp[1] == 's') {
+                            cols.scaledCoords = true;
+                        }
                         if (c0 == 'x') cols.idxX = colIdx;
                         else if (c0 == 'y') cols.idxY = colIdx;
-                        else if (c0 == 'z') cols.idxZ = colIdx;
+                        else cols.idxZ = colIdx;
                     }
                     
                     // Store header for API
@@ -118,6 +152,10 @@ static DumpMetadata parseDumpHeader(const char* RESTRICT data, size_t fileSize, 
 struct WorkerResult {
     BoundingBox bbox;
     int count = 0;
+    // Per-extra-column flag: set to 1 when this worker saw at least one token that is
+    // NOT integer-formatted (has a '.', exponent, etc.). Merged across workers to pick
+    // the column dtype. Sized to numExtraProps by the caller.
+    std::vector<uint8_t> colNonInteger;
 };
 
 HOT static void parseChunk(
@@ -129,43 +167,55 @@ HOT static void parseChunk(
     uint32_t* RESTRICT ids,
     int startIdx,
     const ColumnMapping& cols,
+    const SimulationBox& box,
     WorkerResult* result,
-    float** extraProps,
+    double** extraProps,
     int numExtraProps
 ) {
     const char* p = chunkStart;
     int atomIdx = startIdx;
     BoundingBox bbox;
     bbox.init();
-    
+
+    result->colNonInteger.assign(numExtraProps, 0);
+    uint8_t* RESTRICT colNonInteger = numExtraProps > 0 ? result->colNonInteger.data() : nullptr;
+
     const int maxCol = cols.maxIdx;
-    
+
+    // Precompute the scaled→Cartesian mapping basis once per chunk (cheap, and
+    // keeps the hot per-atom loop branch-light). Only used when the dump carries
+    // fractional coordinates (xs/ys/zs). For Cartesian dumps this is unused.
+    const bool scaled = cols.scaledCoords;
+    const double lx = box.xhi - box.xlo;
+    const double ly = box.yhi - box.ylo;
+    const double lz = box.zhi - box.zlo;
+
     while (p < chunkEnd) {
         const char* lineEnd = findLineEnd(p, globalEnd);
         const char* content = skipWhitespace(p, lineEnd);
-        
+
         // Skip empty lines
         if (UNLIKELY(content >= lineEnd)) {
             p = lineEnd + 1;
             continue;
         }
-        
+
         // Stop at next ITEM: section
         if (UNLIKELY(content[0] == 'I' && lineEnd - content >= 5 && content[4] == ':')) {
             break;
         }
-        
+
         // Parse atom data
         float x = 0, y = 0, z = 0;
         int type = 0;
         uint32_t id = 0;
-        
+
         const char* tok = content;
         int col = 0;
-        
+
         while (tok < lineEnd && col <= maxCol) {
             const char* tokEnd = findTokenEnd(tok, lineEnd);
-            
+
             if (col == cols.idxX) {
                 x = (float)fastAtof(tok, tokEnd);
             } else if (col == cols.idxY) {
@@ -177,32 +227,51 @@ HOT static void parseChunk(
             } else if (ids && col == cols.idxId) {
                 id = (uint32_t)fastAtoi(tok, tokEnd);
             }
-            
+
             if (numExtraProps > 0) {
                 for (int ep = 0; ep < numExtraProps; ep++) {
                     if (col == cols.extraPropIndices[ep]) {
-                        extraProps[ep][atomIdx] = (float)fastAtof(tok, tokEnd);
+                        // Stage in double: exact for integers up to 2^53, so the i32
+                        // path loses no precision and large IDs stay representable.
+                        const double value = fastAtof(tok, tokEnd);
+                        extraProps[ep][atomIdx] = value;
+                        // A column stays i32 only if every token is integer-formatted
+                        // AND in int32 range; a '.'/exponent or an out-of-range integer
+                        // (LAMMPS ids/mol > 2.1e9) downgrades the whole column to f32.
+                        if (!isIntegerToken(tok, tokEnd)
+                            || value < -2147483648.0 || value > 2147483647.0) {
+                            colNonInteger[ep] = 1;
+                        }
                     }
                 }
             }
-            
+
             tok = skipWhitespace(tokEnd, lineEnd);
             col++;
         }
-        
+
         // Write directly to output buffers (zero-copy)
         int posIdx = atomIdx * 3;
+        if (scaled) {
+            // x,y,z currently hold fractional coordinates in [0,1]; map to
+            // Cartesian using the box edges + triclinic tilts (LAMMPS convention).
+            // Tilt terms vanish for orthogonal cells.
+            const double fx = x, fy = y, fz = z;
+            x = (float)(box.xlo + fx * lx + fy * box.xy + fz * box.xz);
+            y = (float)(box.ylo + fy * ly + fz * box.yz);
+            z = (float)(box.zlo + fz * lz);
+        }
         positions[posIdx] = x;
         positions[posIdx + 1] = y;
         positions[posIdx + 2] = z;
         types[atomIdx] = (uint16_t)type;
         if (ids) ids[atomIdx] = id;
-        
+
         bbox.update(x, y, z);
         atomIdx++;
         p = lineEnd + 1;
     }
-    
+
     result->bbox = bbox;
     result->count = atomIdx - startIdx;
 }
@@ -339,20 +408,15 @@ static napi_value ParseDump(napi_env env, napi_callback_info info) {
         napi_create_typedarray(env, napi_uint32_array, (size_t)meta.atomCount, idsBuffer, 0, &idsArray);
     }
     
-    // Allocate Float32Array buffers for each extra property
+    // Stage each extra property in a double buffer: exact for integers up to 2^53,
+    // so the dtype decision (i32 vs f32) and the final cast both stay lossless. The
+    // V8-visible typed array is allocated AFTER parsing, once the column dtype is known.
     const int numExtraProps = (int)cols.extraPropIndices.size();
-    std::vector<void*> extraPropPtrs(numExtraProps, nullptr);
-    std::vector<napi_value> extraPropArrays(numExtraProps);
+    std::vector<std::vector<double>> extraPropStaging(numExtraProps);
+    std::vector<double*> extraPropRawPtrs(numExtraProps);
     for (int i = 0; i < numExtraProps; i++) {
-        napi_value buf;
-        napi_create_arraybuffer(env, (size_t)meta.atomCount * sizeof(float), &extraPropPtrs[i], &buf);
-        napi_create_typedarray(env, napi_float32_array, (size_t)meta.atomCount, buf, 0, &extraPropArrays[i]);
-    }
-    
-    // Prepare extra prop raw pointers for parseChunk
-    std::vector<float*> extraPropRawPtrs(numExtraProps);
-    for (int i = 0; i < numExtraProps; i++) {
-        extraPropRawPtrs[i] = (float*)extraPropPtrs[i];
+        extraPropStaging[i].resize((size_t)meta.atomCount);
+        extraPropRawPtrs[i] = extraPropStaging[i].data();
     }
     
     // Multi-threaded parsing
@@ -367,9 +431,9 @@ static napi_value ParseDump(napi_env env, napi_callback_info info) {
     
     if (numThreads == 1) {
         // Single-threaded fast path
-        parseChunk(dataStart, dataEnd, dataEnd, 
+        parseChunk(dataStart, dataEnd, dataEnd,
                    (float*)posPtr, (uint16_t*)typesPtr, (uint32_t*)idsPtr,
-                   0, cols, &results[0],
+                   0, cols, meta.box, &results[0],
                    extraPropRawPtrs.empty() ? nullptr : extraPropRawPtrs.data(),
                    numExtraProps);
     } else {
@@ -404,7 +468,7 @@ static napi_value ParseDump(napi_env env, napi_callback_info info) {
             threads.emplace_back(parseChunk,
                 chunkPtrs[i], chunkPtrs[i+1], dataEnd,
                 (float*)posPtr, (uint16_t*)typesPtr, (uint32_t*)idsPtr,
-                offsets[i], std::cref(cols), &results[i],
+                offsets[i], std::cref(cols), std::cref(meta.box), &results[i],
                 extraPropRawPtrs.empty() ? nullptr : extraPropRawPtrs.data(),
                 numExtraProps);
         }
@@ -417,7 +481,38 @@ static napi_value ParseDump(napi_env env, napi_callback_info info) {
     for (const auto& r : results) {
         if (r.count > 0) globalBbox.merge(r.bbox);
     }
-    
+
+    // Merge each column's non-integer flag across workers: a column is i32 only when
+    // NO worker saw a non-integer (or out-of-range) token for it.
+    std::vector<ColumnDtype> extraPropDtypes(numExtraProps, ColumnDtype::Int32);
+    for (const auto& r : results) {
+        for (int ep = 0; ep < numExtraProps && ep < (int)r.colNonInteger.size(); ep++) {
+            if (r.colNonInteger[ep]) extraPropDtypes[ep] = ColumnDtype::Float32;
+        }
+    }
+
+    // Materialize each staged column into a V8-visible typed array chosen by dtype:
+    // Int32Array for i32 columns, Float32Array for f32. The double staging buffer is
+    // exact for both casts.
+    std::vector<napi_value> extraPropArrays(numExtraProps);
+    for (int i = 0; i < numExtraProps; i++) {
+        const double* RESTRICT staged = extraPropStaging[i].data();
+        napi_value buf;
+        if (extraPropDtypes[i] == ColumnDtype::Int32) {
+            void* rawPtr = nullptr;
+            napi_create_arraybuffer(env, (size_t)meta.atomCount * sizeof(int32_t), &rawPtr, &buf);
+            napi_create_typedarray(env, napi_int32_array, (size_t)meta.atomCount, buf, 0, &extraPropArrays[i]);
+            int32_t* RESTRICT out = (int32_t*)rawPtr;
+            for (int a = 0; a < meta.atomCount; a++) out[a] = (int32_t)staged[a];
+        } else {
+            void* rawPtr = nullptr;
+            napi_create_arraybuffer(env, (size_t)meta.atomCount * sizeof(float), &rawPtr, &buf);
+            napi_create_typedarray(env, napi_float32_array, (size_t)meta.atomCount, buf, 0, &extraPropArrays[i]);
+            float* RESTRICT out = (float*)rawPtr;
+            for (int a = 0; a < meta.atomCount; a++) out[a] = (float)staged[a];
+        }
+    }
+
     unmapFile(file);
     
     // Build result object
@@ -436,6 +531,18 @@ static napi_value ParseDump(napi_env env, napi_callback_info info) {
             napi_set_named_property(env, propsObj, cols.extraPropNames[i].c_str(), extraPropArrays[i]);
         }
         napi_set_named_property(env, result, "properties", propsObj);
+
+        // Parallel per-column dtype map ('i32' | 'f32'), keyed by property name. The
+        // daemon maps each string straight onto Int32Array/Float32Array.
+        napi_value dtypesObj;
+        napi_create_object(env, &dtypesObj);
+        for (int i = 0; i < numExtraProps; i++) {
+            napi_value dtypeStr;
+            const char* ds = columnDtypeString(extraPropDtypes[i]);
+            napi_create_string_utf8(env, ds, NAPI_AUTO_LENGTH, &dtypeStr);
+            napi_set_named_property(env, dtypesObj, cols.extraPropNames[i].c_str(), dtypeStr);
+        }
+        napi_set_named_property(env, result, "propertyDtypes", dtypesObj);
     }
     
     // Metadata
