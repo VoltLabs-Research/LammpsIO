@@ -11,8 +11,9 @@
 #include <string>
 #include <thread>
 #include <vector>
-#include "../frame.hpp"
+#include <lammpsio/frame.hpp>
 
+namespace lammpsio {
 namespace lammps_dump_text {
 
 namespace {
@@ -154,8 +155,29 @@ HeaderScan parseHeader(const char* RESTRICT data, const char* RESTRICT end, Colu
                 }
 
                 cols.computeMaxIdx();
+                scan.header.positionsWereScaled = cols.scaledCoords;
                 scan.atomsSection = lineEnd + 1;
                 found |= 8;
+            } else {
+                // A section this reader has no meaning for. Its name and the line that
+                // follows are carried through so a caller re-emitting the frame can put it
+                // back — `ITEM: TIME` being the common one.
+                const char* nameEnd = lineEnd;
+                while (nameEnd > label && (unsigned char)*(nameEnd - 1) <= ' ') nameEnd--;
+                std::string name(label, nameEnd - label);
+
+                std::string value;
+                if (lineEnd < end) {
+                    const char* valueLine = lineEnd + 1;
+                    const char* valueEnd = findLineEnd(valueLine, end);
+                    const char* valueStart = skipWhitespace(valueLine, valueEnd);
+                    const char* trimmed = valueEnd;
+                    while (trimmed > valueStart && (unsigned char)*(trimmed - 1) <= ' ') trimmed--;
+                    value.assign(valueStart, trimmed - valueStart);
+                    lineEnd = valueEnd;
+                }
+
+                scan.header.extraSections.emplace_back(std::move(name), std::move(value));
             }
         }
 
@@ -207,7 +229,9 @@ HOT void parseChunk(const char* RESTRICT chunkStart, const char* RESTRICT chunkE
         // The next frame's header ends this one.
         if (UNLIKELY(isItemLine(content, lineEnd))) break;
 
-        float x = 0, y = 0, z = 0;
+        // Kept in double all the way to the write: a float64 consumer must not be handed
+        // coordinates that were already narrowed on the way here.
+        double x = 0, y = 0, z = 0;
         int type = 0;
         uint32_t id = 0;
 
@@ -218,11 +242,11 @@ HOT void parseChunk(const char* RESTRICT chunkStart, const char* RESTRICT chunkE
             const char* tokenEnd = findTokenEnd(token, lineEnd);
 
             if (column == cols.idxX) {
-                x = (float)fastAtof(token, tokenEnd);
+                x = fastAtof(token, tokenEnd);
             } else if (column == cols.idxY) {
-                y = (float)fastAtof(token, tokenEnd);
+                y = fastAtof(token, tokenEnd);
             } else if (column == cols.idxZ) {
-                z = (float)fastAtof(token, tokenEnd);
+                z = fastAtof(token, tokenEnd);
             } else if (column == cols.idxType) {
                 type = fastAtoi(token, tokenEnd);
             } else if (buffers.ids && column == cols.idxId) {
@@ -247,19 +271,16 @@ HOT void parseChunk(const char* RESTRICT chunkStart, const char* RESTRICT chunkE
 
         if (scaled) {
             const double fx = x, fy = y, fz = z;
-            x = (float)(box.xlo + fx * lx + fy * box.xy + fz * box.xz);
-            y = (float)(box.ylo + fy * ly + fz * box.yz);
-            z = (float)(box.zlo + fz * lz);
+            x = box.xlo + fx * lx + fy * box.xy + fz * box.xz;
+            y = box.ylo + fy * ly + fz * box.yz;
+            z = box.zlo + fz * lz;
         }
 
-        const int base = atomIndex * 3;
-        buffers.positions[base] = x;
-        buffers.positions[base + 1] = y;
-        buffers.positions[base + 2] = z;
+        buffers.setPosition(atomIndex, x, y, z);
         buffers.types[atomIndex] = (uint16_t)type;
         if (buffers.ids) buffers.ids[atomIndex] = id;
 
-        bbox.update(x, y, z);
+        bbox.update((float)x, (float)y, (float)z);
         atomIndex++;
         p = lineEnd + 1;
     }
@@ -408,9 +429,8 @@ bool readFrame(const MappedFile& file, const FrameIndexEntry& entry, const ReadO
     double** extras = extraCount > 0 ? extraPointers.data() : nullptr;
 
     const char* dataStart = header.atomsSection;
-    unsigned int threadCount = std::thread::hardware_concurrency();
-    if (threadCount == 0) threadCount = 1;
-    if (atomCount < MULTITHREAD_ATOM_THRESHOLD) threadCount = 1;
+    const unsigned int threadCount =
+        resolveThreadCount(options.maxThreads, atomCount, MULTITHREAD_ATOM_THRESHOLD);
 
     std::vector<ChunkResult> results(threadCount);
 
@@ -479,3 +499,4 @@ extern const FormatReader reader = {
 };
 
 } // namespace lammps_dump_text
+} // namespace lammpsio

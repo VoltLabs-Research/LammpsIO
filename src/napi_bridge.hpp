@@ -7,7 +7,9 @@
 #include <node_api.h>
 #include <string>
 #include <vector>
-#include "frame.hpp"
+#include <lammpsio/frame.hpp>
+
+using namespace lammpsio;
 
 namespace napi_bridge {
 
@@ -34,6 +36,12 @@ inline ReadOptions readOptions(napi_env env, napi_value value) {
         napi_valuetype type;
         napi_typeof(env, field, &type);
         if (type == napi_boolean) napi_get_value_bool(env, field, &options.includeIds);
+    }
+
+    if (napi_get_named_property(env, value, "maxThreads", &field) == napi_ok) {
+        napi_valuetype type;
+        napi_typeof(env, field, &type);
+        if (type == napi_number) napi_get_value_int32(env, field, &options.maxThreads);
     }
 
     if (napi_get_named_property(env, value, "frame", &field) == napi_ok) {
@@ -117,9 +125,11 @@ public:
         void* raw = nullptr;
         napi_value arrayBuffer;
 
+        // float32 for positions: this is what the viewer's GLB and the parquet frames
+        // store, so anything wider would be narrowed a moment later anyway.
         napi_create_arraybuffer(env_, count * 3 * sizeof(float), &raw, &arrayBuffer);
         napi_create_typedarray(env_, napi_float32_array, count * 3, arrayBuffer, 0, &positions_);
-        buffers.positions = (float*)raw;
+        buffers.positions32 = (float*)raw;
 
         napi_create_arraybuffer(env_, count * sizeof(uint16_t), &raw, &arrayBuffer);
         napi_create_typedarray(env_, napi_uint16_array, count, arrayBuffer, 0, &types_);
@@ -134,6 +144,8 @@ public:
 
         return buffers;
     }
+
+    PositionPrecision positionPrecision() const override { return PositionPrecision::Float32; }
 
     napi_value positions() const { return positions_; }
     napi_value types() const { return types_; }
@@ -200,6 +212,23 @@ inline napi_value buildHeaderObject(napi_env env, const char* formatId, const Fr
         napi_set_element(env, cell, vector,
             toVec3(env, header.cell[vector][0], header.cell[vector][1], header.cell[vector][2]));
     }
+
+    // Ordered [name, value] pairs, so a round trip can put the sections back where they were.
+    napi_value extras;
+    napi_create_array_with_length(env, header.extraSections.size(), &extras);
+    for (size_t i = 0; i < header.extraSections.size(); i++) {
+        napi_value pair, item;
+        napi_create_array_with_length(env, 2, &pair);
+        napi_create_string_utf8(env, header.extraSections[i].first.c_str(),
+                                header.extraSections[i].first.size(), &item);
+        napi_set_element(env, pair, 0, item);
+        napi_create_string_utf8(env, header.extraSections[i].second.c_str(),
+                                header.extraSections[i].second.size(), &item);
+        napi_set_element(env, pair, 1, item);
+        napi_set_element(env, extras, i, pair);
+    }
+    napi_set_named_property(env, result, "extraSections", extras);
+    setBool(env, result, "positionsWereScaled", header.positionsWereScaled);
 
     setString(env, result, "format", formatId);
     setInt(env, result, "timestep", header.timestep);

@@ -10,12 +10,14 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include "external/fast_float.h"
+#include <lammpsio/external/fast_float.h>
 
 #define UNLIKELY(x) __builtin_expect(!!(x), 0)
 #define ALWAYS_INLINE __attribute__((always_inline)) inline
 #define HOT __attribute__((hot))
 #define RESTRICT __restrict__
+
+namespace lammpsio {
 
 struct MappedFile {
     const char* data;
@@ -129,14 +131,19 @@ HOT ALWAYS_INLINE const char* findTokenEnd(const char* RESTRICT p, const char* R
     return p;
 }
 
+// Both clamp when p has already run past end: a truncated frame can leave a cursor
+// beyond the mapping, and `end - p` would then be a huge unsigned length handed to
+// memchr.
 ALWAYS_INLINE const char* jumpToNextLine(const char* RESTRICT p, const char* RESTRICT end) {
-    // Use memchr for cache-efficient line finding
-    const char* nl = (const char*)memchr(p, '\n', end - p);
+    if (UNLIKELY(p >= end)) return end;
+    // memchr keeps this cache-efficient on long lines.
+    const char* nl = (const char*)memchr(p, '\n', (size_t)(end - p));
     return nl ? nl + 1 : end;
 }
 
 ALWAYS_INLINE const char* findLineEnd(const char* RESTRICT p, const char* RESTRICT end) {
-    const char* nl = (const char*)memchr(p, '\n', end - p);
+    if (UNLIKELY(p >= end)) return end;
+    const char* nl = (const char*)memchr(p, '\n', (size_t)(end - p));
     return nl ? nl : end;
 }
 
@@ -240,3 +247,5 @@ ALWAYS_INLINE void detectDataColumnStyle(int colCount, ColumnMapping& cols) {
     }
     cols.computeMaxIdx();
 }
+
+} // namespace lammpsio

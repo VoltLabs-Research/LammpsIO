@@ -249,3 +249,36 @@ test('XYZ species become numeric types with their symbols returned as hints', ()
     assert.deepEqual(Array.from(frame.types), [1, 2, 1, 3]);
     assert.deepEqual(frame.elementHintsByType, ['Fe', 'C', 'O']);
 });
+
+test('a dump section the reader has no meaning for is carried through, not dropped', () => {
+    // `ITEM: TIME` is the common one. A consumer re-emitting the frame needs it back, so
+    // unknown sections travel with the header instead of being skipped.
+    const file = write('with-time.dump', [
+        'ITEM: TIMESTEP', '400',
+        'ITEM: TIME', '0.0004',
+        'ITEM: NUMBER OF ATOMS', '1',
+        'ITEM: BOX BOUNDS pp pp pp', '0.0 10.0', '0.0 10.0', '0.0 10.0',
+        'ITEM: ATOMS id type x y z', '1 1 1.0 2.0 3.0', ''
+    ].join('\n'));
+
+    const header = readHeader(file);
+    assert.equal(header.timestep, 400);
+    assert.deepEqual(header.extraSections, [['TIME', '0.0004']]);
+});
+
+test('positionsWereScaled records what the file held, not what was returned', () => {
+    const scaled = writeDump('was-scaled.dump', [{
+        timestep: 0, bounds: ORTHO_BOUNDS, columns: 'id type xs ys zs',
+        rows: ['1 1 0.5 0.5 0.5']
+    }]);
+    const cartesian = writeDump('was-cartesian.dump', [{
+        timestep: 0, bounds: ORTHO_BOUNDS, columns: 'id type x y z',
+        rows: ['1 1 5.0 10.0 15.0']
+    }]);
+
+    // Both return Cartesian positions; only one came that way.
+    assert.equal(readHeader(scaled).positionsWereScaled, true);
+    assert.equal(readHeader(cartesian).positionsWereScaled, false);
+    assert.deepEqual(Array.from(readFrame(scaled).positions), [5, 10, 15]);
+    assert.deepEqual(Array.from(readFrame(cartesian).positions), [5, 10, 15]);
+});

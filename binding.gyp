@@ -4,6 +4,7 @@
       "target_name": "lammps_io",
       "sources": [
         "src/registry.cpp",
+        "src/reader_registry.cpp",
         "src/formats/lammps_dump_text.cpp",
         "src/formats/lammps_data.cpp",
         "src/formats/lammps_dump_binary.cpp",
@@ -11,6 +12,7 @@
         "src/formats/extxyz.cpp"
       ],
       "include_dirs": [
+        "include",
         "src"
       ],
       "cflags!": [

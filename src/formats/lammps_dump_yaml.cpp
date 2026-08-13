@@ -26,8 +26,9 @@
 #include <cstring>
 #include <string>
 #include <vector>
-#include "../frame.hpp"
+#include <lammpsio/frame.hpp>
 
+namespace lammpsio {
 namespace lammps_dump_yaml {
 
 namespace {
@@ -344,21 +345,18 @@ bool readFrame(const MappedFile& file, const FrameIndexEntry& entry, const ReadO
             return value ? fastAtof(value->c_str(), value->c_str() + value->size()) : 0.0;
         };
 
-        float x = (float)asDouble(field(cols.idxX));
-        float y = (float)asDouble(field(cols.idxY));
-        float z = (float)asDouble(field(cols.idxZ));
+        double x = asDouble(field(cols.idxX));
+        double y = asDouble(field(cols.idxY));
+        double z = asDouble(field(cols.idxZ));
 
         if (header.scaledCoords) {
             const double fx = x, fy = y, fz = z;
-            x = (float)(header.header.box.xlo + fx * lx + fy * header.header.box.xy + fz * header.header.box.xz);
-            y = (float)(header.header.box.ylo + fy * ly + fz * header.header.box.yz);
-            z = (float)(header.header.box.zlo + fz * lz);
+            x = header.header.box.xlo + fx * lx + fy * header.header.box.xy + fz * header.header.box.xz;
+            y = header.header.box.ylo + fy * ly + fz * header.header.box.yz;
+            z = header.header.box.zlo + fz * lz;
         }
 
-        const int base = atomIndex * 3;
-        buffers.positions[base] = x;
-        buffers.positions[base + 1] = y;
-        buffers.positions[base + 2] = z;
+        buffers.setPosition(atomIndex, x, y, z);
         buffers.types[atomIndex] = (uint16_t)asDouble(field(cols.idxType));
         if (buffers.ids) buffers.ids[atomIndex] = (uint32_t)asDouble(field(cols.idxId));
 
@@ -371,7 +369,7 @@ bool readFrame(const MappedFile& file, const FrameIndexEntry& entry, const ReadO
             if (!isIntegerToken(start, stop)) frame.extras[extra].dtype = ColumnDtype::Float32;
         }
 
-        frame.bbox.update(x, y, z);
+        frame.bbox.update((float)x, (float)y, (float)z);
         atomIndex++;
         p = lineEnd + 1;
     }
@@ -389,3 +387,4 @@ extern const FormatReader reader = {
 };
 
 } // namespace lammps_dump_yaml
+} // namespace lammpsio

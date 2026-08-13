@@ -5,8 +5,9 @@
 #include <cstring>
 #include <string>
 #include <vector>
-#include "../frame.hpp"
+#include <lammpsio/frame.hpp>
 
+namespace lammpsio {
 namespace lammps_data {
 
 namespace {
@@ -382,7 +383,7 @@ bool readFrame(const MappedFile& file, const FrameIndexEntry&, const ReadOptions
         // The next section header ends the atom rows.
         if (UNLIKELY(*content >= 'A' && *content <= 'Z')) break;
 
-        float x = 0, y = 0, z = 0;
+        double x = 0, y = 0, z = 0;
         int type = 0;
         uint32_t id = 0;
 
@@ -393,11 +394,11 @@ bool readFrame(const MappedFile& file, const FrameIndexEntry&, const ReadOptions
             const char* tokenEnd = findTokenEnd(token, lineEnd);
 
             if (column == cols.idxX) {
-                x = (float)fastAtof(token, tokenEnd);
+                x = fastAtof(token, tokenEnd);
             } else if (column == cols.idxY) {
-                y = (float)fastAtof(token, tokenEnd);
+                y = fastAtof(token, tokenEnd);
             } else if (column == cols.idxZ) {
-                z = (float)fastAtof(token, tokenEnd);
+                z = fastAtof(token, tokenEnd);
             } else if (column == cols.idxType) {
                 type = fastAtoi(token, tokenEnd);
             } else if (buffers.ids && column == cols.idxId) {
@@ -408,14 +409,11 @@ bool readFrame(const MappedFile& file, const FrameIndexEntry&, const ReadOptions
             column++;
         }
 
-        const int base = atomIndex * 3;
-        buffers.positions[base] = x;
-        buffers.positions[base + 1] = y;
-        buffers.positions[base + 2] = z;
+        buffers.setPosition(atomIndex, x, y, z);
         buffers.types[atomIndex] = (uint16_t)type;
         if (buffers.ids) buffers.ids[atomIndex] = id;
 
-        frame.bbox.update(x, y, z);
+        frame.bbox.update((float)x, (float)y, (float)z);
         atomIndex++;
         p = lineEnd + 1;
     }
@@ -433,3 +431,4 @@ extern const FormatReader reader = {
 };
 
 } // namespace lammps_data
+} // namespace lammpsio

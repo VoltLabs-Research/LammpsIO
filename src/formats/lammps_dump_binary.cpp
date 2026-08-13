@@ -27,8 +27,9 @@
 #include <cstring>
 #include <string>
 #include <vector>
-#include "../frame.hpp"
+#include <lammpsio/frame.hpp>
 
+namespace lammpsio {
 namespace lammps_dump_binary {
 
 namespace {
@@ -459,21 +460,20 @@ bool readFrame(const MappedFile& file, const FrameIndexEntry& entry, const ReadO
                 }
             }
 
-            float x = (float)fields[cols.idxX];
-            float y = (float)fields[cols.idxY];
-            float z = (float)fields[cols.idxZ];
+            // Every value in a binary dump is already a double on disk, so nothing is
+            // narrowed before the write decides what the consumer wants.
+            double x = fields[cols.idxX];
+            double y = fields[cols.idxY];
+            double z = fields[cols.idxZ];
 
             if (parsed.scaledCoords) {
                 const double fx = x, fy = y, fz = z;
-                x = (float)(parsed.header.box.xlo + fx * lx + fy * parsed.header.box.xy + fz * parsed.header.box.xz);
-                y = (float)(parsed.header.box.ylo + fy * ly + fz * parsed.header.box.yz);
-                z = (float)(parsed.header.box.zlo + fz * lz);
+                x = parsed.header.box.xlo + fx * lx + fy * parsed.header.box.xy + fz * parsed.header.box.xz;
+                y = parsed.header.box.ylo + fy * ly + fz * parsed.header.box.yz;
+                z = parsed.header.box.zlo + fz * lz;
             }
 
-            const int base = atomIndex * 3;
-            buffers.positions[base] = x;
-            buffers.positions[base + 1] = y;
-            buffers.positions[base + 2] = z;
+            buffers.setPosition(atomIndex, x, y, z);
             buffers.types[atomIndex] = cols.idxType >= 0 ? (uint16_t)fields[cols.idxType] : 0;
             if (buffers.ids) buffers.ids[atomIndex] = (uint32_t)fields[cols.idxId];
 
@@ -486,7 +486,7 @@ bool readFrame(const MappedFile& file, const FrameIndexEntry& entry, const ReadO
                 }
             }
 
-            frame.bbox.update(x, y, z);
+            frame.bbox.update((float)x, (float)y, (float)z);
             atomIndex++;
         }
     }
@@ -504,3 +504,4 @@ extern const FormatReader reader = {
 };
 
 } // namespace lammps_dump_binary
+} // namespace lammpsio

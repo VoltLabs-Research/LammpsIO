@@ -8,8 +8,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <thread>
+#include <utility>
 #include <vector>
-#include "common.hpp"
+#include <lammpsio/common.hpp>
+
+namespace lammpsio {
 
 /** Wire identifiers, also what detectFormat() returns. */
 namespace format_id {
@@ -26,6 +30,13 @@ struct ReadOptions {
     std::vector<std::string> properties;
     /** Which frame of a multi-frame file to read. */
     int frame = 0;
+    /**
+     * Upper bound on worker threads for the formats that parse in parallel. 0 means
+     * "decide from the hardware", which is right for a caller that owns the process and
+     * wrong for one already inside a parallel region — a plugin running under a TBB task
+     * would otherwise oversubscribe every core it was given.
+     */
+    int maxThreads = 0;
 };
 
 /**
@@ -42,6 +53,8 @@ struct ExtraColumn {
 };
 
 struct FrameHeader {
+    /** Format id of the reader that produced this, set by the registry. Never owned. */
+    const char* format = nullptr;
     int timestep = 0;
     int atomCount = 0;
     /**
@@ -59,6 +72,18 @@ struct FrameHeader {
     bool periodic[3] = { true, true, true };
     /** Column names as they appeared in the file, lowercased. */
     std::vector<std::string> headers;
+    /**
+     * True when the file stored fractional coordinates (xs/ys/zs). The positions handed
+     * back are Cartesian either way; this records what the source held, which a consumer
+     * re-emitting the file needs in order to write it back the way it came.
+     */
+    bool positionsWereScaled = false;
+    /**
+     * Header sections the reader has no meaning for, in the order they appeared: a dump's
+     * `ITEM: TIME` and anything else a caller might want to carry through a round trip.
+     * Keyed by section name, value is the single line that followed it.
+     */
+    std::vector<std::pair<std::string, std::string>> extraSections;
 };
 
 /**
@@ -111,25 +136,63 @@ struct FrameIndexEntry {
     int atomCount = 0;
 };
 
-/** Raw destination buffers for the bulk per-atom data. */
+/**
+ * Raw destination buffers for the bulk per-atom data.
+ *
+ * Positions land in whichever precision the allocator asked for: exactly one of the two
+ * pointers is set. Readers never look at which — they call setPosition with the double
+ * they parsed and the narrowing, if any, happens here. That is what lets one parser serve
+ * a renderer that wants float32 and an analysis pipeline whose geometry is float64,
+ * without either paying for a conversion pass afterwards.
+ */
 struct FrameBuffers {
-    float* positions = nullptr;
+    float* positions32 = nullptr;
+    double* positions64 = nullptr;
     uint16_t* types = nullptr;
     /** Null unless ids were requested and the format carries them. */
     uint32_t* ids = nullptr;
+
+    HOT ALWAYS_INLINE void setPosition(int atomIndex, double x, double y, double z) {
+        const int base = atomIndex * 3;
+        if (positions32) {
+            positions32[base] = (float)x;
+            positions32[base + 1] = (float)y;
+            positions32[base + 2] = (float)z;
+        } else {
+            positions64[base] = x;
+            positions64[base + 1] = y;
+            positions64[base + 2] = z;
+        }
+    }
 };
+
+enum class PositionPrecision { Float32, Float64 };
 
 /**
  * Hands out the buffers a reader fills.
  *
- * The N-API implementation allocates them straight inside V8-visible ArrayBuffers, so
- * atom data is written exactly once and never copied on its way to JavaScript. A
- * reader must call this exactly once, after it knows the atom count.
+ * The N-API implementation allocates them straight inside V8-visible ArrayBuffers, so atom
+ * data is written exactly once and never copied on its way to JavaScript; a C++ consumer
+ * backs them with its own containers. A reader must call this exactly once, after it knows
+ * the atom count.
  */
 struct FrameAllocator {
     virtual FrameBuffers allocate(int atomCount, bool withIds) = 0;
+    /** Which precision `allocate` will hand back for positions. */
+    virtual PositionPrecision positionPrecision() const { return PositionPrecision::Float32; }
     virtual ~FrameAllocator() = default;
 };
+
+/** Resolves ReadOptions::maxThreads against the hardware and a work-dependent floor. */
+inline unsigned int resolveThreadCount(int maxThreads, int atomCount, int multithreadThreshold) {
+    if (atomCount < multithreadThreshold) return 1;
+
+    unsigned int available = maxThreads > 0
+        ? (unsigned int)maxThreads
+        : std::thread::hardware_concurrency();
+
+    return available == 0 ? 1 : available;
+}
 
 struct ParsedFrame {
     FrameHeader header;
@@ -204,3 +267,5 @@ inline void resolveExtraColumns(const std::vector<std::string>& requested,
 
     if (!cols.extraPropIndices.empty()) cols.computeMaxIdx();
 }
+
+} // namespace lammpsio

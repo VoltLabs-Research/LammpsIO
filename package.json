@@ -8,7 +8,9 @@
   "type": "commonjs",
   "files": [
     "binding.gyp",
+    "CMakeLists.txt",
     "index.js",
+    "include/**/*",
     "src/**/*",
     "LICENSE",
     "CHANGELOG.md"

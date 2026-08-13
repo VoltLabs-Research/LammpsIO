@@ -17,8 +17,9 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
-#include "../frame.hpp"
+#include <lammpsio/frame.hpp>
 
+namespace lammpsio {
 namespace extxyz {
 
 namespace {
@@ -371,7 +372,7 @@ bool readFrame(const MappedFile& file, const FrameIndexEntry& entry, const ReadO
             continue;
         }
 
-        float x = 0, y = 0, z = 0;
+        double x = 0, y = 0, z = 0;
         int type = 0;
         uint32_t id = 0;
 
@@ -382,11 +383,11 @@ bool readFrame(const MappedFile& file, const FrameIndexEntry& entry, const ReadO
             const char* tokenEnd = findTokenEnd(token, lineEnd);
 
             if (column == cols.idxX) {
-                x = (float)fastAtof(token, tokenEnd);
+                x = fastAtof(token, tokenEnd);
             } else if (column == cols.idxY) {
-                y = (float)fastAtof(token, tokenEnd);
+                y = fastAtof(token, tokenEnd);
             } else if (column == cols.idxZ) {
-                z = (float)fastAtof(token, tokenEnd);
+                z = fastAtof(token, tokenEnd);
             } else if (column == cols.idxType) {
                 if (header.layout.symbolicSpecies && !isIntegerToken(token, tokenEnd)) {
                     const std::string symbol(token, tokenEnd - token);
@@ -419,14 +420,11 @@ bool readFrame(const MappedFile& file, const FrameIndexEntry& entry, const ReadO
             column++;
         }
 
-        const int base = atomIndex * 3;
-        buffers.positions[base] = x;
-        buffers.positions[base + 1] = y;
-        buffers.positions[base + 2] = z;
+        buffers.setPosition(atomIndex, x, y, z);
         buffers.types[atomIndex] = (uint16_t)type;
         if (buffers.ids) buffers.ids[atomIndex] = id;
 
-        frame.bbox.update(x, y, z);
+        frame.bbox.update((float)x, (float)y, (float)z);
         atomIndex++;
         p = lineEnd + 1;
     }
@@ -457,3 +455,4 @@ extern const FormatReader reader = {
 };
 
 } // namespace extxyz
+} // namespace lammpsio
