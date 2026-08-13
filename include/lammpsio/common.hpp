@@ -30,7 +30,12 @@
     #define UNLIKELY(x) (!!(x))
     #define ALWAYS_INLINE __forceinline
     #define HOT
-    #define RESTRICT __restrict
+    // Deliberately empty rather than __restrict. MSVC keeps __restrict in the type, so a
+    // conditional between a plain pointer and a __restrict parameter has no common type
+    // and fails to compile (`return nl ? nl : end;` in findLineEnd). Since restrict is
+    // only an aliasing hint, dropping it on MSVC costs a little optimisation there and
+    // removes the whole class of error instead of casting it away one site at a time.
+    #define RESTRICT
 #else
     #define UNLIKELY(x) __builtin_expect(!!(x), 0)
     #define ALWAYS_INLINE __attribute__((always_inline)) inline

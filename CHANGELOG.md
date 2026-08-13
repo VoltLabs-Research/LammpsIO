@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.1.2
+
+Finishes the Windows build 2.1.1 started. `memmem` is a GNU/BSD extension with no MSVC
+equivalent, and the LAMMPS data reader used it to find the `lo` in a box-bounds line.
+
+### Fixed
+
+- `memmemFallback` implements the search portably and is aliased to `memmem` on MSVC
+  only, so the reader's call site is untouched and platforms that ship the real function
+  keep using it. Verified differentially against glibc's `memmem` over 200k randomised
+  cases plus the edge cases (empty needle, empty haystack, needle longer than haystack,
+  overlapping candidates, embedded NUL).
+
 ## 2.1.1
 
 Builds on Windows. The C++ library added in 2.1.0 was POSIX-only, so every plugin build
