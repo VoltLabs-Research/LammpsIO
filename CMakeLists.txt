@@ -6,7 +6,7 @@
 # sources — everything except the N-API layer, which only node-gyp sees.
 
 cmake_minimum_required(VERSION 3.16)
-project(lammpsio LANGUAGES CXX VERSION 2.0.0)
+project(lammpsio LANGUAGES CXX VERSION 2.1.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

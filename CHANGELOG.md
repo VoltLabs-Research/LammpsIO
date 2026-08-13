@@ -1,5 +1,46 @@
 # Changelog
 
+## 2.1.0
+
+The reader core becomes consumable from C++ as well, so the analysis plugins read
+trajectories through the same code the daemon does instead of their own parser. Additive
+for the npm package: nothing in the JavaScript API changed shape.
+
+### Added
+
+- A CMake target and a Conan recipe (`lammpsio/2.1.0`) that build the readers as a plain
+  C++ static library. `include/lammpsio/reader_registry.hpp` is the public surface:
+  `detectFormat`, `scanFrames`, `readHeader`, `readFrame`, plus a `VectorFrameAllocator`
+  for consumers with no special memory requirements.
+- Positions are written in the precision the consumer asks for. `FrameAllocator` declares
+  float32 or float64 and readers keep values in double until the write, so a renderer and a
+  float64 geometry pipeline are both served without a conversion pass. The Node addon still
+  gets float32 straight into its V8 buffers.
+- `maxThreads` in the read options, for callers already inside a parallel region. A plugin
+  running under a TBB task would otherwise start a nested pool on every core it was given.
+- `positionsWereScaled` on the header: whether the file held fractional coordinates.
+  Positions come back Cartesian either way, but a consumer re-emitting the file needs to
+  know how it arrived.
+- `extraSections` on the header: `ITEM:` sections the reader has no meaning for, in order,
+  so `ITEM: TIME` and friends survive a round trip instead of being dropped.
+
+### Changed
+
+- Everything lives in a `lammpsio` namespace. Names like `BoundingBox` and `FrameHeader`
+  at global scope would collide in any sizeable C++ project that links this.
+- Public headers moved to `include/lammpsio/`, implementations stay in `src/`, so
+  `#include <lammpsio/...>` resolves identically in the source tree and against the
+  installed package.
+- Format dispatch moved out of the N-API layer into `reader_registry.cpp`. Both builds
+  compile the same readers; `registry.cpp` is now only argument reading and result
+  conversion.
+
+### Fixed
+
+- `findLineEnd` and `jumpToNextLine` clamp when the cursor has already passed the end of
+  the mapping, which a truncated frame can cause. Previously that handed `memchr` a huge
+  unsigned length.
+
 ## 2.0.0
 
 One addon with one API, replacing the two separate parsers and their per-parser entry
