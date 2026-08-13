@@ -41,6 +41,51 @@
 namespace lammpsio {
 
 /**
+ * Substring search over raw bytes, matching glibc/BSD `memmem`.
+ *
+ * Defined unconditionally, and aliased to `memmem` only where the platform lacks it, so
+ * the fallback can be exercised on a platform that also has the real thing to compare
+ * against. Skipping to the next candidate first byte with `memchr` keeps it close to
+ * glibc's behaviour on the short needles the readers use ("lo", "atoms").
+ */
+ALWAYS_INLINE const void* memmemFallback(
+    const void* haystack,
+    size_t haystackLength,
+    const void* needle,
+    size_t needleLength
+) {
+    if (needleLength == 0) return haystack;
+    if (haystackLength < needleLength) return nullptr;
+
+    const char* const begin = static_cast<const char*>(haystack);
+    const char* const lastStart = begin + (haystackLength - needleLength);
+    const char firstByte = *static_cast<const char*>(needle);
+
+    for (const char* candidate = begin; candidate <= lastStart; ++candidate) {
+        candidate = static_cast<const char*>(
+            memchr(candidate, firstByte, static_cast<size_t>(lastStart - candidate) + 1)
+        );
+        if (candidate == nullptr) return nullptr;
+        if (memcmp(candidate, needle, needleLength) == 0) return candidate;
+    }
+
+    return nullptr;
+}
+
+#if defined(_MSC_VER)
+// memmem is a GNU/BSD extension; MSVC ships no equivalent. Declared in this namespace so
+// the readers' unqualified calls resolve here without touching a single call site.
+ALWAYS_INLINE const void* memmem(
+    const void* haystack,
+    size_t haystackLength,
+    const void* needle,
+    size_t needleLength
+) {
+    return memmemFallback(haystack, haystackLength, needle, needleLength);
+}
+#endif
+
+/**
  * A read-only memory mapping of a whole file. Readers only ever touch `data`, `size`
  * and `valid`; the handles are an implementation detail and differ per platform.
  */
