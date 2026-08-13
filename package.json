@@ -1,7 +1,7 @@
 {
   "name": "@voltstack/lammps-io",
-  "version": "1.0.2",
-  "description": "Native Node.js addons for LAMMPS parsing workloads.",
+  "version": "2.0.0",
+  "description": "Native readers for LAMMPS and LAMMPS-adjacent trajectory formats.",
   "private": false,
   "gypfile": true,
   "main": "index.js",
@@ -9,13 +9,17 @@
   "files": [
     "binding.gyp",
     "index.js",
-    "src/**/*"
+    "src/**/*",
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "install": "node-gyp rebuild",
-    "test": "node --test"
+    "test": "node --test",
+    "oracle": "${OVITO_BIN:-ovitos} test/oracle.py"
   },
   "devDependencies": {
     "node-gyp": "^10.0.0"
-  }
+  },
+  "license": "MIT"
 }

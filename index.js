@@ -1,18 +1,34 @@
-// Native LAMMPS parsers (N-API addons).
+// Native readers for LAMMPS and LAMMPS-adjacent trajectory formats.
 //
-// dumpParser.parseDump(path, { includeIds, properties }) → {
-//   positions: Float32Array, types: Uint16Array, ids?: Uint32Array,
-//   properties?: Record<string, Int32Array | Float32Array>,   // typed per column
-//   propertyDtypes?: Record<string, 'i32' | 'f32'>,           // parallel dtype map
-//   metadata: { timestep, natoms, boxBounds, headers }, min, max
-// }
+// One entry point per question, and every one of them identifies the format itself —
+// callers never have to guess, and never have to try one reader and fall back to
+// another. Frame indices come from scanFrames().
 //
-// dataParser.parseData(path, { includeIds }) → {
-//   positions, types, ids?, metadata, min, max,
-//   massesByType?: number[],         // 1-indexed by LAMMPS type (index 0 = type 1)
-//   elementHintsByType?: (string|null)[]  // trailing "# <symbol>" comment per type
-// }
-module.exports = {
-  dataParser: require('./build/Release/data_parser.node'),
-  dumpParser: require('./build/Release/dump_parser.node')
-};
+//   detectFormat(path)
+//     → 'lammps-dump' | 'lammps-data' | null
+//     null means "nothing here recognizes it". A missing or unreadable file throws.
+//
+//   scanFrames(path)
+//     → { format, frames: [{ index, byteOffset, byteLength, timestep, natoms }] }
+//     Frame boundaries as byte ranges, so a multi-frame file can be split into
+//     single-frame files by copying bytes, with no reparse. Single-frame formats
+//     report one entry spanning the file.
+//
+//   readHeader(path, { frame = 0 })
+//     → { format, timestep, natoms, boxBounds, pbc, headers }
+//     Header only, no atom data: what a caller needs to accept an upload and describe
+//     its cell without paying for the positions.
+//
+//   readFrame(path, { frame = 0, includeIds = false, properties = [] })
+//     → { positions: Float32Array, types: Uint16Array, ids?: Uint32Array,
+//         properties?: Record<string, Int32Array | Float32Array>,
+//         propertyDtypes?: Record<string, 'i32' | 'f32'>,
+//         metadata, min, max,
+//         massesByType?: number[],              // data files, 1-indexed by type
+//         elementHintsByType?: (string|null)[] } // data files, trailing "# <symbol>"
+//     `properties: ['*']` requests every per-atom column the file carries beyond
+//     id/type/position.
+//
+// boxBounds holds the true (untilted) cell edges plus the triclinic tilt factors
+// xy/xz/yz, already recovered from the bounding box a dump prints.
+module.exports = require('./build/Release/lammps_io.node');

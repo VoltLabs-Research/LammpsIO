@@ -1,24 +1,34 @@
 {
   "targets": [
     {
-      "target_name": "data_parser",
-      "sources": ["src/data_parser.cpp"],
-      "include_dirs": [],
-      "cflags!": ["-fno-exceptions"],
-      "cflags_cc!": ["-fno-exceptions"],
-      "cflags": ["-O3", "-ffast-math"],
-      "cflags_cc": ["-O3", "-ffast-math", "-std=c++17"],
-      "defines": ["NAPI_CPP_EXCEPTIONS"]
-    },
-    {
-      "target_name": "dump_parser",
-      "sources": ["src/dump_parser.cpp"],
-      "include_dirs": ["src"],
-      "cflags!": ["-fno-exceptions"],
-      "cflags_cc!": ["-fno-exceptions"],
-      "cflags": ["-O3", "-ffast-math"],
-      "cflags_cc": ["-O3", "-ffast-math", "-std=c++17"],
-      "defines": ["NAPI_CPP_EXCEPTIONS"]
+      "target_name": "lammps_io",
+      "sources": [
+        "src/registry.cpp",
+        "src/formats/lammps_dump_text.cpp",
+        "src/formats/lammps_data.cpp",
+        "src/formats/lammps_dump_binary.cpp",
+        "src/formats/lammps_dump_yaml.cpp",
+        "src/formats/extxyz.cpp"
+      ],
+      "include_dirs": [
+        "src"
+      ],
+      "cflags!": [
+        "-fno-exceptions"
+      ],
+      "cflags_cc!": [
+        "-fno-exceptions"
+      ],
+      "cflags": [
+        "-O3"
+      ],
+      "cflags_cc": [
+        "-O3",
+        "-std=c++17"
+      ],
+      "defines": [
+        "NAPI_CPP_EXCEPTIONS"
+      ]
     }
   ]
 }

@@ -57,3 +57,6 @@ output/
 *.tar.zst
 *.sha256
 CLAUDE.md
+
+# npm pack output
+*.tgz

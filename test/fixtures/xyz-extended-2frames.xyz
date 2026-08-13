@@ -1,0 +1,10 @@
+3
+Lattice="10.0 0.0 0.0 2.0 20.0 0.0 0.5 0.25 30.0" Properties=species:S:1:pos:R:3:local_energy:R:1 pbc="T T T"
+Fe 1.0 2.0 3.0 -3.15
+C 5.0 10.0 15.0 -2.05
+Fe 9.0 18.0 27.0 -3.25
+3
+Lattice="10.0 0.0 0.0 2.0 20.0 0.0 0.5 0.25 30.0" Properties=species:S:1:pos:R:3:local_energy:R:1 pbc="T T T"
+Fe 1.5 2.5 3.5 -3.10
+C 5.5 10.5 15.5 -2.00
+Fe 9.5 18.5 27.5 -3.20
