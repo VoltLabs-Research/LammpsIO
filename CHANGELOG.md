@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.1.3
+
+`RESTRICT` is now empty under MSVC. It expanded to `__restrict`, which MSVC keeps as part
+of the type, so `return nl ? nl : end;` in `findLineEnd` had two candidate common types
+(`const char*&` and `const char* __restrict&`) and failed to compile in any consumer that
+merely included the header — CoreToolkit hit it before calling anything.
+
+### Fixed
+
+- `RESTRICT` drops to nothing on MSVC rather than being cast away at each site. It is an
+  aliasing hint, so MSVC loses a little optimisation and the whole class of conditional
+  ambiguity goes with it. GCC and Clang keep `__restrict__`.
+
 ## 2.1.2
 
 Finishes the Windows build 2.1.1 started. `memmem` is a GNU/BSD extension with no MSVC

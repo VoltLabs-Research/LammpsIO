@@ -14,7 +14,7 @@ class LammpsIOConan(ConanFile):
     """
 
     name = "lammpsio"
-    version = "2.1.2"
+    version = "2.1.3"
     package_type = "static-library"
     license = "MIT"
     description = "Native readers for LAMMPS and LAMMPS-adjacent trajectory formats"
