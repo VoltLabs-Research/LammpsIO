@@ -1,6 +1,6 @@
 {
   "name": "@voltstack/lammps-io",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "Native readers for LAMMPS and LAMMPS-adjacent trajectory formats.",
   "private": false,
   "gypfile": true,

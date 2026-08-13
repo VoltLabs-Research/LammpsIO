@@ -1,5 +1,24 @@
 # Changelog
 
+## 2.1.1
+
+Builds on Windows. The C++ library added in 2.1.0 was POSIX-only, so every plugin build
+on the `windows-2022` leg of the matrix failed to compile it: `common.hpp` reached for
+`sys/mman.h`, `unistd.h` and four GCC attributes with no guards. Nothing in either API
+changed shape.
+
+### Fixed
+
+- `mapFile` / `unmapFile` gained a Win32 implementation (`CreateFileA` +
+  `CreateFileMapping` + `MapViewOfFile`), with `FILE_FLAG_SEQUENTIAL_SCAN` standing in
+  for the POSIX `MADV_SEQUENTIAL` advice. `MappedFile` keeps `data`, `size` and `valid`;
+  only its private handles differ per platform, and no reader touched them.
+- `UNLIKELY`, `ALWAYS_INLINE`, `HOT` and `RESTRICT` now resolve to their MSVC
+  equivalents (`__forceinline`, `__restrict`, and no branch hint) instead of GCC
+  attributes MSVC rejects.
+- `windows.h` is included with `NOMINMAX`, so its `min`/`max` macros stop colliding with
+  the `std::min` / `std::max` calls in the format readers.
+
 ## 2.1.0
 
 The reader core becomes consumable from C++ as well, so the analysis plugins read
