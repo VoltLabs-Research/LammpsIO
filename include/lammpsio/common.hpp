@@ -6,54 +6,150 @@
 #include <cstdint>
 #include <string>
 #include <vector>
-#include <fcntl.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <unistd.h>
+
+#if defined(_WIN32)
+    #ifndef NOMINMAX
+        #define NOMINMAX
+    #endif
+    #ifndef WIN32_LEAN_AND_MEAN
+        #define WIN32_LEAN_AND_MEAN
+    #endif
+    #include <windows.h>
+#else
+    #include <fcntl.h>
+    #include <sys/mman.h>
+    #include <sys/stat.h>
+    #include <unistd.h>
+#endif
+
 #include <lammpsio/external/fast_float.h>
 
-#define UNLIKELY(x) __builtin_expect(!!(x), 0)
-#define ALWAYS_INLINE __attribute__((always_inline)) inline
-#define HOT __attribute__((hot))
-#define RESTRICT __restrict__
+#if defined(_MSC_VER)
+    // MSVC has no __builtin_expect and no hot attribute. Branch hinting is dropped
+    // rather than faked: the expression keeps its meaning, only the hint is lost.
+    #define UNLIKELY(x) (!!(x))
+    #define ALWAYS_INLINE __forceinline
+    #define HOT
+    #define RESTRICT __restrict
+#else
+    #define UNLIKELY(x) __builtin_expect(!!(x), 0)
+    #define ALWAYS_INLINE __attribute__((always_inline)) inline
+    #define HOT __attribute__((hot))
+    #define RESTRICT __restrict__
+#endif
 
 namespace lammpsio {
 
+/**
+ * A read-only memory mapping of a whole file. Readers only ever touch `data`, `size`
+ * and `valid`; the handles are an implementation detail and differ per platform.
+ */
 struct MappedFile {
     const char* data;
     size_t size;
+#if defined(_WIN32)
+    HANDLE file;
+    HANDLE mapping;
+#else
     int fd;
+#endif
     bool valid;
 };
 
+#if defined(_WIN32)
+
+ALWAYS_INLINE MappedFile mapFile(const char* filepath) {
+    MappedFile f = {nullptr, 0, INVALID_HANDLE_VALUE, nullptr, false};
+
+    // FILE_FLAG_SEQUENTIAL_SCAN is the counterpart of the MADV_SEQUENTIAL advice the
+    // POSIX path gives: it tells the cache manager to read ahead and not retain pages.
+    f.file = CreateFileA(
+        filepath,
+        GENERIC_READ,
+        FILE_SHARE_READ,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
+        nullptr
+    );
+    if (UNLIKELY(f.file == INVALID_HANDLE_VALUE)) return f;
+
+    LARGE_INTEGER fileSize;
+    if (UNLIKELY(!GetFileSizeEx(f.file, &fileSize))) {
+        CloseHandle(f.file);
+        f.file = INVALID_HANDLE_VALUE;
+        return f;
+    }
+
+    // A zero-length file cannot be mapped on Windows, and has nothing to read anyway.
+    if (UNLIKELY(fileSize.QuadPart == 0)) {
+        CloseHandle(f.file);
+        f.file = INVALID_HANDLE_VALUE;
+        return f;
+    }
+
+    f.mapping = CreateFileMappingA(f.file, nullptr, PAGE_READONLY, 0, 0, nullptr);
+    if (UNLIKELY(f.mapping == nullptr)) {
+        CloseHandle(f.file);
+        f.file = INVALID_HANDLE_VALUE;
+        return f;
+    }
+
+    const void* view = MapViewOfFile(f.mapping, FILE_MAP_READ, 0, 0, 0);
+    if (UNLIKELY(view == nullptr)) {
+        CloseHandle(f.mapping);
+        CloseHandle(f.file);
+        f.mapping = nullptr;
+        f.file = INVALID_HANDLE_VALUE;
+        return f;
+    }
+
+    f.data = static_cast<const char*>(view);
+    f.size = static_cast<size_t>(fileSize.QuadPart);
+    f.valid = true;
+    return f;
+}
+
+ALWAYS_INLINE void unmapFile(MappedFile& f) {
+    if (f.data) UnmapViewOfFile(f.data);
+    if (f.mapping) CloseHandle(f.mapping);
+    if (f.file != INVALID_HANDLE_VALUE) CloseHandle(f.file);
+    f.data = nullptr;
+    f.mapping = nullptr;
+    f.file = INVALID_HANDLE_VALUE;
+    f.valid = false;
+}
+
+#else
+
 ALWAYS_INLINE MappedFile mapFile(const char* filepath) {
     MappedFile f = {nullptr, 0, -1, false};
-    
+
     f.fd = open(filepath, O_RDONLY);
     if (UNLIKELY(f.fd < 0)) return f;
-    
+
     struct stat sb;
     if (UNLIKELY(fstat(f.fd, &sb) < 0)) {
         close(f.fd);
         return f;
     }
-    
+
     f.size = sb.st_size;
     if (UNLIKELY(f.size == 0)) {
         close(f.fd);
         return f;
     }
-    
+
     f.data = (const char*)mmap(nullptr, f.size, PROT_READ, MAP_PRIVATE | MAP_NORESERVE, f.fd, 0);
     if (UNLIKELY(f.data == MAP_FAILED)) {
         close(f.fd);
         f.data = nullptr;
         return f;
     }
-    
+
     // Advise kernel for sequential access and preload
     madvise((void*)f.data, f.size, MADV_SEQUENTIAL | MADV_WILLNEED);
-    
+
     f.valid = true;
     return f;
 }
@@ -63,6 +159,8 @@ ALWAYS_INLINE void unmapFile(MappedFile& f) {
     if (f.fd >= 0) close(f.fd);
     f.valid = false;
 }
+
+#endif
 
 
 HOT ALWAYS_INLINE double fastAtof(const char* RESTRICT p, const char* RESTRICT end) {
