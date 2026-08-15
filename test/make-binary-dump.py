@@ -38,7 +38,6 @@ ENDIAN = 0x0001
 FORMAT_REVISION = 0x0002
 COLUMNS = 'id type x y z c_pe'
 
-# Two frames, each with the same four atoms moved along x. Column order matches COLUMNS.
 FRAMES = [
     (0, [
         (1, 1, 1.0, 2.0, 3.0, -3.15),
@@ -55,10 +54,8 @@ FRAMES = [
 ]
 
 BBOX = [(0.0, 10.0), (0.0, 20.0), (0.0, 30.0)]
-# Triclinic, so the tilt block is present and the reader has to handle it.
 TILT = (2.0, 0.5, 0.25)
 TRICLINIC = 1
-# 0 = periodic on both faces of every axis, which is LAMMPS's `p p p`.
 BOUNDARY = [[0, 0], [0, 0], [0, 0]]
 
 
@@ -82,11 +79,10 @@ def frame_bytes(timestep, atoms):
 
     unit_style = b'metal'
     out += struct.pack('<i', len(unit_style)) + unit_style
-    out += struct.pack('<b', 0)  # no simulation time recorded
+    out += struct.pack('<b', 0)
     columns = COLUMNS.encode()
     out += struct.pack('<i', len(columns)) + columns
 
-    # Two chunks, to exercise the chunked body rather than assuming a single block.
     split = len(atoms) // 2
     chunks = [atoms[:split], atoms[split:]]
     out += struct.pack('<i', len(chunks))

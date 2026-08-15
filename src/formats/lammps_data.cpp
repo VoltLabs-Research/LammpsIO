@@ -1,7 +1,3 @@
-// LAMMPS data file reader (the format `read_data` consumes and `write_data` produces).
-//
-// Always a single frame: a data file is one configuration, not a trajectory.
-
 #include <cstring>
 #include <string>
 #include <vector>
@@ -12,17 +8,8 @@ namespace lammps_data {
 
 namespace {
 
-/** Enough to cover the header block of any data file. */
 constexpr size_t HEADER_SCAN_LIMIT = 8192;
 
-/**
- * Column layout for the `atom_style` values that carry positions in a fixed place.
- *
- * LAMMPS writes the style as a comment on the `Atoms` line (`Atoms # full`), which is
- * the only reliable way to know the layout — several styles share a column count. When
- * the comment is missing, the caller falls back to guessing from the count, which is
- * what this reader did for every file before.
- */
 struct AtomStyleLayout {
     const char* name;
     int idxId;
@@ -31,7 +18,6 @@ struct AtomStyleLayout {
 };
 
 constexpr AtomStyleLayout ATOM_STYLES[] = {
-    // name          id  type   x
     { "atomic",       0,   1,   2 },
     { "charge",       0,   1,   3 },
     { "full",         0,   2,   4 },
@@ -56,7 +42,6 @@ struct HeaderScan {
     bool valid = false;
 };
 
-/** Matches a standalone section header, i.e. the word alone on its line. */
 bool isSectionHeader(const char* content, const char* lineEnd, const char* word, size_t length) {
     if ((size_t)(lineEnd - content) < length || strncmp(content, word, length) != 0) return false;
     const char* after = skipWhitespace(content + length, lineEnd);
@@ -67,12 +52,8 @@ HeaderScan parseHeader(const char* RESTRICT data, size_t size) {
     HeaderScan scan;
     const char* limit = data + (size < HEADER_SCAN_LIMIT ? size : HEADER_SCAN_LIMIT);
     const char* p = data;
-    uint8_t found = 0; // 1=atoms, 2=xlo, 4=ylo, 8=zlo
+    uint8_t found = 0;
 
-    // Scans the whole header window rather than stopping once the four required values
-    // are in: the optional `xy xz yz` tilt line comes *after* `zlo zhi`, so an early
-    // exit read every triclinic cell as orthogonal. Atom rows are all numbers, so
-    // running past the header into them matches none of the keywords below.
     while (p < limit) {
         const char* lineEnd = findLineEnd(p, limit);
         const char* content = skipWhitespace(p, lineEnd);
@@ -93,10 +74,6 @@ HeaderScan parseHeader(const char* RESTRICT data, size_t size) {
             }
         }
 
-        // `<xy> <xz> <yz> xy xz yz` carries the triclinic tilt factors. Without them a
-        // sheared cell reads as a box the wrong shape, which is what the caller draws.
-        // Matched token-wise rather than against the literal string, so the whitespace
-        // between the labels does not have to be single spaces.
         {
             double values[3] = { 0.0, 0.0, 0.0 };
             const char* labels[3] = { nullptr, nullptr, nullptr };
@@ -159,15 +136,6 @@ HeaderScan parseHeader(const char* RESTRICT data, size_t size) {
     return scan;
 }
 
-/**
- * The optional `Masses` section, which is where a data file records what its numeric
- * types actually are:
- *
- *   Masses
- *
- *   1 55.845   # Fe
- *   2 12.011   # C
- */
 void parseMasses(const char* RESTRICT data, size_t size, ParsedFrame& frame) {
     const char* end = data + size;
     const char* p = data;
@@ -232,7 +200,6 @@ void parseMasses(const char* RESTRICT data, size_t size, ParsedFrame& frame) {
 
     if (maxType == 0) return;
 
-    // Compacted 1-indexed by type, so index 0 holds type 1.
     frame.massesByType.assign((size_t)maxType, 0.0);
     frame.elementHintsByType.assign((size_t)maxType, std::string());
     for (const auto& row : rows) {
@@ -241,7 +208,6 @@ void parseMasses(const char* RESTRICT data, size_t size, ParsedFrame& frame) {
     }
 }
 
-/** Finds the `Atoms` section and reports the declared atom_style, if any. */
 const char* findAtomsSection(const char* data, size_t size, std::string& style) {
     const char* end = data + size;
     const char* p = data;
@@ -296,11 +262,9 @@ int countColumns(const char* p, const char* end) {
     return columns;
 }
 
-} // namespace
+}
 
 bool sniff(const MappedFile& file) {
-    // A data file declares an atom count and at least one box bound in its header, and
-    // has no `ITEM:` sections to confuse it with a dump.
     const HeaderScan scan = parseHeader(file.data, file.size);
     return scan.valid;
 }
@@ -380,7 +344,6 @@ bool readFrame(const MappedFile& file, const FrameIndexEntry&, const ReadOptions
             p = lineEnd + 1;
             continue;
         }
-        // The next section header ends the atom rows.
         if (UNLIKELY(*content >= 'A' && *content <= 'Z')) break;
 
         double x = 0, y = 0, z = 0;
@@ -421,7 +384,6 @@ bool readFrame(const MappedFile& file, const FrameIndexEntry&, const ReadOptions
     return true;
 }
 
-// See the note in lammps_dump_text.cpp: `extern` is what gives this external linkage.
 extern const FormatReader reader = {
     format_id::LammpsData,
     sniff,
@@ -430,5 +392,5 @@ extern const FormatReader reader = {
     readFrame
 };
 
-} // namespace lammps_data
-} // namespace lammpsio
+}
+}

@@ -1,17 +1,4 @@
-// XYZ and extended-XYZ reader — the interchange format ASE writes and most MD tooling
-// can read, and the one VOLT's upload gate has been promising for a while.
-//
-// Layout, repeated once per frame:
-//
-//   <natoms>
-//   <comment>                       # extended: Lattice="..." Properties=... pbc="T T T"
-//   <species> <x> <y> <z> [...]     # natoms rows
-//
-// Extended files declare their columns in `Properties=name:type:ncols:...`; plain ones
-// are read as `species x y z` with any trailing columns kept under generated names.
-//
 // Ported from OVITO's XYZImporter (MIT option of its dual license); extended-XYZ support
-// there is by James Kermode.
 
 #include <cstring>
 #include <string>
@@ -24,26 +11,22 @@ namespace extxyz {
 
 namespace {
 
-/** Columns whose meaning is fixed; everything else becomes an extra column. */
 constexpr const char* SPECIES_NAMES[] = { "species", "type", "element", "atom_types" };
 
 struct ColumnSpec {
     std::string name;
-    /** Index of this column's value within a row. */
     int index = 0;
 };
 
 struct Layout {
     ColumnMapping cols;
     std::vector<std::string> headers;
-    /** True when the species column holds element symbols rather than numeric types. */
     bool symbolicSpecies = true;
 };
 
 struct HeaderScan {
     FrameHeader header;
     Layout layout;
-    /** First atom row of the frame. */
     const char* atomsSection = nullptr;
     bool valid = false;
 };
@@ -55,7 +38,6 @@ bool isSpeciesName(const std::string& name) {
     return false;
 }
 
-/** Case-insensitive search for `key` within a line, returning the value's first char. */
 const char* findKey(const char* content, const char* lineEnd, const char* key, size_t keyLength) {
     for (const char* p = content; p + keyLength <= lineEnd; p++) {
         size_t matched = 0;
@@ -72,7 +54,6 @@ const char* findKey(const char* content, const char* lineEnd, const char* key, s
     return nullptr;
 }
 
-/** Reads a quoted or bare value, i.e. everything up to the closing quote or whitespace. */
 void readKeyValue(const char* start, const char* lineEnd, const char*& valueStart, const char*& valueEnd) {
     if (start < lineEnd && (*start == '"' || *start == '\'')) {
         const char quote = *start;
@@ -85,10 +66,6 @@ void readKeyValue(const char* start, const char* lineEnd, const char*& valueStar
     }
 }
 
-/**
- * `Lattice="ax ay az bx by bz cx cy cz"` — three cell vectors, each contiguous.
- * Returns false when the key is absent or does not hold nine numbers.
- */
 bool parseLattice(const char* content, const char* lineEnd, FrameHeader& header) {
     const char* after = findKey(content, lineEnd, "lattice=", 8);
     if (!after) return false;
@@ -118,7 +95,6 @@ bool parseLattice(const char* content, const char* lineEnd, FrameHeader& header)
     return true;
 }
 
-/** `pbc="T T T"`. Absent means periodic when a lattice was given. */
 void parsePbc(const char* content, const char* lineEnd, FrameHeader& header, bool hasLattice) {
     for (int axis = 0; axis < 3; axis++) header.periodic[axis] = hasLattice;
 
@@ -136,11 +112,6 @@ void parsePbc(const char* content, const char* lineEnd, FrameHeader& header, boo
     }
 }
 
-/**
- * `Properties=species:S:1:pos:R:3:...` — colon-separated (name, type, count) triples in
- * column order. The type letter is only used to tell a string column from a numeric one;
- * the numeric dtype is decided from the values, as everywhere else here.
- */
 bool parseProperties(const char* content, const char* lineEnd, Layout& layout) {
     const char* after = findKey(content, lineEnd, "properties=", 11);
     if (!after) return false;
@@ -182,8 +153,6 @@ bool parseProperties(const char* content, const char* lineEnd, Layout& layout) {
                 layout.cols.idxId = column;
                 layout.headers.push_back("id");
             } else {
-                // A multi-component column becomes one scalar column per component: this
-                // reader has no vector properties, so the component index goes in the name.
                 layout.headers.push_back(columns > 1 ? name + "_" + std::to_string(component) : name);
             }
             column++;
@@ -194,7 +163,6 @@ bool parseProperties(const char* content, const char* lineEnd, Layout& layout) {
     return layout.cols.idxX >= 0;
 }
 
-/** Plain XYZ: species then three coordinates, anything further under a generated name. */
 void assumePlainLayout(const char* firstRow, const char* end, Layout& layout) {
     const char* lineEnd = findLineEnd(firstRow, end);
     const char* token = skipWhitespace(firstRow, lineEnd);
@@ -250,11 +218,9 @@ const char* frameEndPointer(const MappedFile& file, const FrameIndexEntry& entry
     return file.data + (end > file.size ? file.size : end);
 }
 
-} // namespace
+}
 
 bool sniff(const MappedFile& file) {
-    // The first non-blank line is an atom count and nothing else. That is loose enough
-    // that this reader has to be tried after the LAMMPS ones, which match on structure.
     const char* end = file.data + file.size;
     const char* p = skipWhitespace(file.data, end);
     if (p >= end) return false;
@@ -264,7 +230,6 @@ bool sniff(const MappedFile& file) {
     if (tokenEnd == p || !isIntegerToken(p, tokenEnd)) return false;
     if (skipWhitespace(tokenEnd, lineEnd) < lineEnd) return false;
 
-    // And a second line has to exist to hold the comment.
     return lineEnd < end && parseHeader(file.data, end).valid;
 }
 
@@ -318,9 +283,6 @@ bool readHeader(const MappedFile& file, const FrameIndexEntry& entry,
     }
 
     header = std::move(scanned.header);
-    // An XYZ frame carries no timestep of its own, so its position in the file is the only
-    // thing distinguishing it. Callers key frames by timestep — leaving every frame at 0
-    // makes a multi-frame file look like one frame repeated.
     header.timestep = entry.timestep;
     return true;
 }
@@ -338,7 +300,6 @@ bool readFrame(const MappedFile& file, const FrameIndexEntry& entry, const ReadO
     resolveExtraColumns(options.properties, header.layout.headers, cols);
 
     frame.header = header.header;
-    // See readHeader: the frame's index in the file stands in for a timestep.
     frame.header.timestep = entry.timestep;
     frame.hasIds = options.includeIds && cols.idxId >= 0;
 
@@ -353,9 +314,6 @@ bool readFrame(const MappedFile& file, const FrameIndexEntry& entry, const ReadO
         frame.extras[extra].dtype = ColumnDtype::Int32;
     }
 
-    // Element symbols become numeric types in order of first appearance, and the symbols
-    // travel back as element hints — the same shape a data file's Masses section gives,
-    // so a caller resolves both the same way.
     std::unordered_map<std::string, int> speciesIds;
 
     frame.bbox.init();
@@ -429,8 +387,6 @@ bool readFrame(const MappedFile& file, const FrameIndexEntry& entry, const ReadO
         p = lineEnd + 1;
     }
 
-    // A file with no Lattice has no cell of its own; the extent of its atoms is the only
-    // thing left to describe, and it is not periodic.
     if (frame.header.cell[0][0] == 0.0 && frame.header.cell[1][1] == 0.0 &&
         frame.header.cell[2][2] == 0.0 && atomIndex > 0) {
         frame.header.cell[0][0] = frame.bbox.maxX - frame.bbox.minX;
@@ -445,7 +401,6 @@ bool readFrame(const MappedFile& file, const FrameIndexEntry& entry, const ReadO
     return true;
 }
 
-// See the note in lammps_dump_text.cpp: `extern` is what gives this external linkage.
 extern const FormatReader reader = {
     format_id::ExtXyz,
     sniff,
@@ -454,5 +409,5 @@ extern const FormatReader reader = {
     readFrame
 };
 
-} // namespace extxyz
-} // namespace lammpsio
+}
+}

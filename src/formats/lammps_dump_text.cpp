@@ -1,10 +1,3 @@
-// LAMMPS text dump reader (`ITEM:`-delimited), the format `dump ... atom/custom` writes.
-//
-// Multi-frame aware: a dump file is a concatenation of frames, and scan() reports the
-// byte range of each so a caller can split one file into single-frame files without
-// reparsing. The previous version of this parser read the first frame and silently
-// ignored the rest.
-
 #include <algorithm>
 #include <cstring>
 #include <future>
@@ -20,12 +13,10 @@ namespace {
 
 constexpr int MULTITHREAD_ATOM_THRESHOLD = 50000;
 
-/** True for a line that opens an `ITEM:` section. */
 ALWAYS_INLINE bool isItemLine(const char* content, const char* lineEnd) {
     return lineEnd - content >= 5 && content[0] == 'I' && content[4] == ':';
 }
 
-/** Points past `ITEM: ` on a line already known to be a section header. */
 ALWAYS_INLINE const char* itemLabel(const char* content) {
     return content + 6;
 }
@@ -36,17 +27,10 @@ struct HeaderScan {
     bool valid = false;
 };
 
-/**
- * Reads the four `ITEM:` sections that precede the atom rows.
- *
- * Triclinic dumps print a third value per bounds line (the tilt factors) and their
- * lo/hi are the *bounding box* inflated by those tilts, so the true edges are recovered
- * below. For orthogonal cells the tilts are zero and the recovery is a no-op.
- */
 HeaderScan parseHeader(const char* RESTRICT data, const char* RESTRICT end, ColumnMapping& cols) {
     HeaderScan scan;
     const char* p = data;
-    uint8_t found = 0; // 1=timestep, 2=natoms, 4=bounds, 8=atoms
+    uint8_t found = 0;
 
     while (p < end && found != 15) {
         const char* lineEnd = findLineEnd(p, end);
@@ -73,8 +57,6 @@ HeaderScan parseHeader(const char* RESTRICT data, const char* RESTRICT end, Colu
                 found |= 2;
                 p = valueEnd;
             } else if (!(found & 4) && strncmp(label, "BOX BOUNDS", 10) == 0) {
-                // The rest of this line carries the boundary styles, optionally preceded
-                // by the literal `xy xz yz` that marks a triclinic dump.
                 const char* flag = skipWhitespace(label + 10, lineEnd);
                 if (flag + 1 < lineEnd && flag[0] == 'x' && flag[1] == 'y') {
                     for (int skipped = 0; skipped < 3 && flag < lineEnd; skipped++) {
@@ -137,9 +119,6 @@ HeaderScan parseHeader(const char* RESTRICT data, const char* RESTRICT end, Colu
                     } else if (length == 2 && first == 'i' && head[1] == 'd') {
                         cols.idxId = columnIndex;
                     } else if ((first == 'x' || first == 'y' || first == 'z') && isPositionColumn(head, length)) {
-                        // x/xu are Cartesian; xs/xsu are fractions of the box and need
-                        // mapping through it. The 's' right after the axis letter marks
-                        // the scaled styles.
                         if (length >= 2 && head[1] == 's') cols.scaledCoords = true;
                         if (first == 'x') cols.idxX = columnIndex;
                         else if (first == 'y') cols.idxY = columnIndex;
@@ -159,9 +138,6 @@ HeaderScan parseHeader(const char* RESTRICT data, const char* RESTRICT end, Colu
                 scan.atomsSection = lineEnd + 1;
                 found |= 8;
             } else {
-                // A section this reader has no meaning for. Its name and the line that
-                // follows are carried through so a caller re-emitting the frame can put it
-                // back — `ITEM: TIME` being the common one.
                 const char* nameEnd = lineEnd;
                 while (nameEnd > label && (unsigned char)*(nameEnd - 1) <= ' ') nameEnd--;
                 std::string name(label, nameEnd - label);
@@ -192,10 +168,6 @@ HeaderScan parseHeader(const char* RESTRICT data, const char* RESTRICT end, Colu
 struct ChunkResult {
     BoundingBox bbox;
     int count = 0;
-    /**
-     * Per-extra-column: set when this chunk saw a token that is not integer-formatted.
-     * Merged across chunks, because a column is i32 only if no chunk disagreed.
-     */
     std::vector<uint8_t> nonInteger;
 };
 
@@ -226,11 +198,8 @@ HOT void parseChunk(const char* RESTRICT chunkStart, const char* RESTRICT chunkE
             continue;
         }
 
-        // The next frame's header ends this one.
         if (UNLIKELY(isItemLine(content, lineEnd))) break;
 
-        // Kept in double all the way to the write: a float64 consumer must not be handed
-        // coordinates that were already narrowed on the way here.
         double x = 0, y = 0, z = 0;
         int type = 0;
         uint32_t id = 0;
@@ -257,8 +226,6 @@ HOT void parseChunk(const char* RESTRICT chunkStart, const char* RESTRICT chunkE
                 if (column != cols.extraPropIndices[extra]) continue;
                 const double value = fastAtof(token, tokenEnd);
                 extras[extra][atomIndex] = value;
-                // A '.'/exponent, or an integer past int32 range (LAMMPS ids and mol
-                // numbers can exceed it), downgrades the whole column to f32.
                 if (!isIntegerToken(token, tokenEnd) ||
                     value < -2147483648.0 || value > 2147483647.0) {
                     nonInteger[extra] = 1;
@@ -312,10 +279,9 @@ const char* frameEndPointer(const MappedFile& file, const FrameIndexEntry& entry
     return file.data + (end > file.size ? file.size : end);
 }
 
-} // namespace
+}
 
 bool sniff(const MappedFile& file) {
-    // The first non-blank line of a dump is always `ITEM: TIMESTEP`.
     const char* end = file.data + file.size;
     const char* p = file.data;
 
@@ -345,7 +311,6 @@ bool scan(const MappedFile& file, std::vector<FrameIndexEntry>& frames, std::str
         }
 
         if (!isItemLine(content, lineEnd) || strncmp(itemLabel(content), "TIMESTEP", 8) != 0) {
-            // Not a frame boundary: a truncated or malformed tail, nothing more to index.
             break;
         }
 
@@ -365,8 +330,6 @@ bool scan(const MappedFile& file, std::vector<FrameIndexEntry>& frames, std::str
         entry.timestep = header.header.timestep;
         entry.atomCount = header.header.atomCount;
 
-        // Skipping exactly natoms lines is much cheaper than testing every line for an
-        // `ITEM:` prefix, and it lands on the next frame's first line.
         const char* cursor = header.atomsSection;
         for (int atom = 0; atom < header.header.atomCount && cursor < end; atom++) {
             cursor = jumpToNextLine(cursor, end);
@@ -446,8 +409,6 @@ bool readFrame(const MappedFile& file, const FrameIndexEntry& entry, const ReadO
             bounds[i] = jumpToNextLine(dataStart + i * chunkSize, frameEnd);
         }
 
-        // Each chunk needs to know where its atoms start in the output buffers, which
-        // means counting the earlier chunks' rows before any of them can write.
         std::vector<std::future<int>> counts;
         for (unsigned int i = 0; i < threadCount; i++) {
             counts.push_back(std::async(std::launch::async,
@@ -488,8 +449,6 @@ bool readFrame(const MappedFile& file, const FrameIndexEntry& entry, const ReadO
     return true;
 }
 
-// `extern` is load-bearing: a const object at namespace scope defaults to internal
-// linkage, so without it the registry's declaration finds no definition to link to.
 extern const FormatReader reader = {
     format_id::LammpsDumpText,
     sniff,
@@ -498,5 +457,5 @@ extern const FormatReader reader = {
     readFrame
 };
 
-} // namespace lammps_dump_text
-} // namespace lammpsio
+}
+}

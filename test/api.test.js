@@ -1,8 +1,3 @@
-// The four entry points: format detection, frame indexing, header-only reads, and full
-// frame reads. The multi-frame cases are the ones that matter most — the previous
-// version of this addon read frame 0 of a multi-frame file and silently dropped the
-// rest, which is invisible to a caller that never counts.
-
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -65,8 +60,6 @@ test('scanFrames indexes every frame of a multi-frame dump', () => {
 });
 
 test('frame byte ranges tile the file exactly and each one is a valid dump on its own', () => {
-    // This is the contract a caller relies on to split a multi-frame upload into
-    // per-frame files by copying bytes, with no reparse and no reserialization.
     const file = threeFrameDump();
     const bytes = fs.readFileSync(file);
     const { frames } = scanFrames(file);
@@ -117,7 +110,6 @@ test('readHeader describes a frame without reading its atoms', () => {
     assert.equal(header.boxBounds.xlo, 0);
     assert.equal(header.boxBounds.xhi, 10);
     assert.equal(header.boxBounds.xy, 0);
-    // Header reads carry no atom data at all.
     assert.equal(header.positions, undefined);
 });
 
@@ -179,14 +171,11 @@ test('a data file is a single frame and carries its Masses section', () => {
     assert.equal(frame.metadata.natoms, 4);
     assert.deepEqual(Array.from(frame.types), [1, 1, 2, 2]);
     assert.deepEqual(Array.from(frame.ids), [1, 2, 3, 4]);
-    // 1-indexed by type, so index 0 is type 1.
     assert.deepEqual(frame.massesByType, [55.845, 12.011]);
     assert.deepEqual(frame.elementHintsByType, ['Fe', 'C']);
 });
 
 test('the declared atom_style picks the column layout over the column count', () => {
-    // `full` is id mol type q x y z — seven columns, the same count as several other
-    // styles. Guessing from the count alone would read the charge as a coordinate.
     const file = write('full.data', [
         'LAMMPS data file', '',
         '1 atoms', '1 atom types', '',
@@ -223,8 +212,6 @@ test('an unrecognized file is an error naming the path, not a silent empty read'
 });
 
 test('each frame of a multi-frame XYZ gets a distinct timestep', () => {
-    // An XYZ frame carries no timestep, so its index stands in for one. Callers key
-    // frames by timestep; identical values would collapse the trajectory to one frame.
     const file = write('two-frames.xyz', [
         '1', 'Lattice="10 0 0 0 10 0 0 0 10" Properties=species:S:1:pos:R:3', 'Fe 1.0 1.0 1.0',
         '1', 'Lattice="10 0 0 0 10 0 0 0 10" Properties=species:S:1:pos:R:3', 'Fe 2.0 2.0 2.0',
@@ -245,14 +232,11 @@ test('XYZ species become numeric types with their symbols returned as hints', ()
     ].join('\n'));
 
     const frame = readFrame(file);
-    // Numbered in order of first appearance, 1-based.
     assert.deepEqual(Array.from(frame.types), [1, 2, 1, 3]);
     assert.deepEqual(frame.elementHintsByType, ['Fe', 'C', 'O']);
 });
 
 test('a dump section the reader has no meaning for is carried through, not dropped', () => {
-    // `ITEM: TIME` is the common one. A consumer re-emitting the frame needs it back, so
-    // unknown sections travel with the header instead of being skipped.
     const file = write('with-time.dump', [
         'ITEM: TIMESTEP', '400',
         'ITEM: TIME', '0.0004',
@@ -276,7 +260,6 @@ test('positionsWereScaled records what the file held, not what was returned', ()
         rows: ['1 1 5.0 10.0 15.0']
     }]);
 
-    // Both return Cartesian positions; only one came that way.
     assert.equal(readHeader(scaled).positionsWereScaled, true);
     assert.equal(readHeader(cartesian).positionsWereScaled, false);
     assert.deepEqual(Array.from(readFrame(scaled).positions), [5, 10, 15]);

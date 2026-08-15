@@ -1,8 +1,5 @@
 'use strict';
 
-// Fixture builders shared by the test files. Kept as code rather than checked-in files
-// so a format's expected input is readable next to the assertions about it.
-
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -15,7 +12,6 @@ const write = (name, body) => {
     return file;
 };
 
-/** One `ITEM:`-delimited dump frame. `bounds` lines may carry a third tilt column. */
 const dumpFrame = ({ timestep, bounds, boundaryFlags = 'pp pp pp', columns, rows }) => [
     'ITEM: TIMESTEP', String(timestep),
     'ITEM: NUMBER OF ATOMS', String(rows.length),

@@ -1,7 +1,3 @@
-// The addon's entry points: read the arguments, call the shared C++ reader registry,
-// convert the result. Nothing about formats lives here — adding one means adding a
-// translation unit and a line in reader_registry.cpp, and this file does not change.
-
 #include <node_api.h>
 #include <string>
 #include <vector>
@@ -30,10 +26,6 @@ bool readCallArgs(napi_env env, napi_callback_info info, CallArgs& args) {
     return true;
 }
 
-/**
- * Raises the JS exception that fits the failure: a frame index that does not exist is a
- * RangeError, so a caller can tell "no such frame" from "cannot read this file".
- */
 napi_value throwReaderError(napi_env env, const std::string& error) {
     if (error.rfind("Frame ", 0) == 0 && error.find("out of range") != std::string::npos) {
         napi_throw_range_error(env, nullptr, error.c_str());
@@ -55,8 +47,6 @@ napi_value DetectFormat(napi_env env, napi_callback_info info) {
     if (format) {
         napi_create_string_utf8(env, format, NAPI_AUTO_LENGTH, &result);
     } else {
-        // An unreadable file threw above, so reaching here means the file was read and
-        // simply not recognized. That is an answer, not a failure.
         napi_get_null(env, &result);
     }
     return result;
@@ -112,7 +102,7 @@ void exportFunction(napi_env env, napi_value exports, const char* name, napi_cal
     napi_set_named_property(env, exports, name, fn);
 }
 
-} // namespace
+}
 
 static napi_value Init(napi_env env, napi_value exports) {
     exportFunction(env, exports, "detectFormat", DetectFormat);

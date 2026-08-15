@@ -1,25 +1,3 @@
-// LAMMPS YAML dump reader (`dump ... yaml`).
-//
-// Not a YAML parser. LAMMPS emits a fixed, tiny subset — top-level scalar keys, flow
-// sequences in brackets, and block sequences of flow sequences — and this reads exactly
-// that subset, failing rather than guessing on anything else. A general YAML parser would
-// be a dependency and a much larger surface for no gain here.
-//
-//   ---
-//   creator: LAMMPS
-//   timestep: 0
-//   natoms: 4
-//   boundary: [ p, p, p, p, f, f ]
-//   box:
-//     - [ 0, 10 ]
-//     - [ 0, 20 ]
-//     - [ 0, 30 ]
-//     - [ 2, 0.5, 0.25 ]        # tilt factors, optional
-//   keywords: [ id, type, x, y, z, c_pe ]
-//   data:
-//     - [ 1, 1, 1.0, 2.0, 3.0, -3.15 ]
-//   ...
-//
 // Ported from OVITO's LAMMPSDumpYAMLImporter (MIT option of its dual license).
 
 #include <algorithm>
@@ -37,7 +15,6 @@ struct HeaderScan {
     FrameHeader header;
     ColumnMapping cols;
     bool scaledCoords = false;
-    /** First `- [ ... ]` row of the `data:` block. */
     const char* dataSection = nullptr;
     bool valid = false;
 };
@@ -47,13 +24,11 @@ bool startsWith(const char* content, const char* lineEnd, const char* prefix) {
     return (size_t)(lineEnd - content) >= length && std::strncmp(content, prefix, length) == 0;
 }
 
-/** A document boundary: `---` alone on its line. */
 bool isDocumentStart(const char* content, const char* lineEnd) {
     if (!startsWith(content, lineEnd, "---")) return false;
     return skipWhitespace(content + 3, lineEnd) >= lineEnd;
 }
 
-/** Splits the inside of a `[ a, b, c ]` flow sequence into its items. */
 void splitFlowSequence(const char* content, const char* lineEnd, std::vector<std::string>& items) {
     const char* open = (const char*)std::memchr(content, '[', lineEnd - content);
     if (!open) return;
@@ -77,7 +52,6 @@ void splitFlowSequence(const char* content, const char* lineEnd, std::vector<std
     }
 }
 
-/** The value after `key:` on a line already known to start with that key. */
 const char* valueAfterKey(const char* content, const char* lineEnd, size_t keyLength) {
     return skipWhitespace(content + keyLength, lineEnd);
 }
@@ -123,7 +97,6 @@ HeaderScan parseHeader(const char* RESTRICT data, const char* RESTRICT end) {
             continue;
         }
 
-        // A second `---`, or the `...` terminator, ends this document.
         if (p != data && isDocumentStart(content, lineEnd)) break;
         if (startsWith(content, lineEnd, "...")) break;
 
@@ -157,7 +130,6 @@ HeaderScan parseHeader(const char* RESTRICT data, const char* RESTRICT end) {
             splitFlowSequence(content, lineEnd, flags);
             if (flags.size() == 6) {
                 for (int axis = 0; axis < 3; axis++) {
-                    // Periodic only when both faces of the axis are.
                     scan.header.periodic[axis] = flags[axis * 2] == "p" && flags[axis * 2 + 1] == "p";
                 }
             }
@@ -185,7 +157,6 @@ HeaderScan parseHeader(const char* RESTRICT data, const char* RESTRICT end) {
         scan.header.box.xz = tilt[1];
         scan.header.box.yz = tilt[2];
 
-        // Same recovery as a text dump: what the file records is the inflated bounding box.
         const double minX = std::min(std::min(0.0, tilt[0]), std::min(tilt[1], tilt[0] + tilt[1]));
         const double maxX = std::max(std::max(0.0, tilt[0]), std::max(tilt[1], tilt[0] + tilt[1]));
         scan.header.box.xlo -= minX;
@@ -205,11 +176,9 @@ const char* frameEndPointer(const MappedFile& file, const FrameIndexEntry& entry
     return file.data + (end > file.size ? file.size : end);
 }
 
-} // namespace
+}
 
 bool sniff(const MappedFile& file) {
-    // `---` then `creator: LAMMPS`, which is what makes this distinguishable from any
-    // other YAML document.
     const char* end = file.data + file.size;
     const char* p = skipWhitespace(file.data, end);
     if (p >= end) return false;
@@ -249,7 +218,6 @@ bool scan(const MappedFile& file, std::vector<FrameIndexEntry>& frames, std::str
         entry.timestep = header.header.timestep;
         entry.atomCount = header.header.atomCount;
 
-        // Past the data rows, then past the `...` terminator if the file has one.
         const char* cursor = header.dataSection;
         for (int atom = 0; atom < header.header.atomCount && cursor < end; atom++) {
             cursor = jumpToNextLine(cursor, end);
@@ -377,7 +345,6 @@ bool readFrame(const MappedFile& file, const FrameIndexEntry& entry, const ReadO
     return true;
 }
 
-// See the note in lammps_dump_text.cpp: `extern` is what gives this external linkage.
 extern const FormatReader reader = {
     format_id::LammpsDumpYaml,
     sniff,
@@ -386,5 +353,5 @@ extern const FormatReader reader = {
     readFrame
 };
 
-} // namespace lammps_dump_yaml
-} // namespace lammpsio
+}
+}

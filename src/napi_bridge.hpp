@@ -1,9 +1,5 @@
 #pragma once
 
-// The only translation unit boundary that touches N-API. Reading options off a JS
-// object and turning a ParsedFrame into one, used to be copy-pasted per parser; every
-// format now shares this one copy.
-
 #include <node_api.h>
 #include <string>
 #include <vector>
@@ -111,10 +107,6 @@ inline napi_value toVec3(napi_env env, double x, double y, double z) {
     return array;
 }
 
-/**
- * Allocates the bulk per-atom buffers directly inside V8-visible ArrayBuffers, so a
- * reader writes atom data once and it reaches JavaScript with no intermediate copy.
- */
 class V8FrameAllocator final : public FrameAllocator {
 public:
     explicit V8FrameAllocator(napi_env env) : env_(env) {}
@@ -125,8 +117,6 @@ public:
         void* raw = nullptr;
         napi_value arrayBuffer;
 
-        // float32 for positions: this is what the viewer's GLB and the parquet frames
-        // store, so anything wider would be narrowed a moment later anyway.
         napi_create_arraybuffer(env_, count * 3 * sizeof(float), &raw, &arrayBuffer);
         napi_create_typedarray(env_, napi_float32_array, count * 3, arrayBuffer, 0, &positions_);
         buffers.positions32 = (float*)raw;
@@ -160,10 +150,6 @@ private:
     bool hasIds_ = false;
 };
 
-/**
- * Materializes one staged column into the typed array its dtype calls for: Int32Array
- * for i32, Float32Array for f32. The staging doubles are exact for both casts.
- */
 inline napi_value toColumnArray(napi_env env, const ExtraColumn& column) {
     const size_t count = column.values.size();
     void* raw = nullptr;
@@ -205,15 +191,12 @@ inline napi_value buildHeaderObject(napi_env env, const char* formatId, const Fr
         napi_set_element(env, pbc, axis, element);
     }
 
-    // The three cell vectors as rows, so cellVectors[0] is a. This is the faithful
-    // representation: boxBounds cannot express a lattice that is not upper triangular.
     napi_create_array_with_length(env, 3, &cell);
     for (size_t vector = 0; vector < 3; vector++) {
         napi_set_element(env, cell, vector,
             toVec3(env, header.cell[vector][0], header.cell[vector][1], header.cell[vector][2]));
     }
 
-    // Ordered [name, value] pairs, so a round trip can put the sections back where they were.
     napi_value extras;
     napi_create_array_with_length(env, header.extraSections.size(), &extras);
     for (size_t i = 0; i < header.extraSections.size(); i++) {
@@ -275,8 +258,6 @@ inline napi_value buildFrameObject(napi_env env, const char* formatId,
     napi_set_named_property(env, result, "max",
         toVec3(env, frame.bbox.maxX, frame.bbox.maxY, frame.bbox.maxZ));
 
-    // Emitted independently: a data file's Masses section gives both, but an
-    // extended-XYZ file gives element symbols and no masses at all.
     napi_value element;
 
     if (!frame.massesByType.empty()) {
@@ -316,8 +297,6 @@ inline napi_value buildScanObject(napi_env env, const char* formatId,
     for (size_t i = 0; i < frames.size(); i++) {
         napi_create_object(env, &entry);
         setInt(env, entry, "index", frames[i].index);
-        // Offsets and lengths can exceed int32 on large trajectories, so they go out as
-        // doubles — exact up to 2^53, far past any file size that matters here.
         setDouble(env, entry, "byteOffset", (double)frames[i].byteOffset);
         setDouble(env, entry, "byteLength", (double)frames[i].byteLength);
         setInt(env, entry, "timestep", frames[i].timestep);
@@ -330,4 +309,4 @@ inline napi_value buildScanObject(napi_env env, const char* formatId,
     return result;
 }
 
-} // namespace napi_bridge
+}

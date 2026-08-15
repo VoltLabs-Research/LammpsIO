@@ -13,13 +13,6 @@ namespace extxyz { extern const FormatReader reader; }
 
 namespace {
 
-/**
- * Sniffing order matters, loosest last. The text dump check is an exact match on the first
- * line and the YAML one on the first two, so both are unambiguous. The binary check either
- * parses a whole header or fails, which is equally safe. The data-file check is structural
- * (an atom count plus box bounds) and the XYZ check is the loosest of all — a line holding
- * nothing but an integer.
- */
 const std::vector<const FormatReader*>& readerTable() {
     static const std::vector<const FormatReader*> table = {
         &lammps_dump_text::reader,
@@ -39,7 +32,6 @@ std::string unsupported(const char* path) {
     return std::string("Unsupported trajectory format: ") + path;
 }
 
-/** Shared prologue: map, identify, and resolve the requested frame. */
 bool locateFrame(const char* path, int frameIndex, const ScopedMappedFile& mapped,
                  const FormatReader*& reader, FrameIndexEntry& entry, std::string& error) {
     if (!mapped.valid()) {
@@ -66,7 +58,7 @@ bool locateFrame(const char* path, int frameIndex, const ScopedMappedFile& mappe
     return true;
 }
 
-} // namespace
+}
 
 const std::vector<const FormatReader*>& readers() {
     return readerTable();
@@ -158,4 +150,4 @@ FrameBuffers VectorFrameAllocator::allocate(int atomCount, bool withIds) {
     return buffers;
 }
 
-} // namespace lammpsio
+}

@@ -1,27 +1,4 @@
-// LAMMPS binary dump reader (`dump ... custom/binary`, files ending .bin/.lammpsbin).
-//
-// The file records neither its endianness nor the integer width LAMMPS was built with, so
-// both are recovered by trying each combination against the first frame and keeping the
-// one that yields a self-consistent header. That is the same strategy OVITO uses, and this
 // reader is a port of its LAMMPSBinaryDumpImporter (MIT option of its dual license).
-//
-// Per frame:
-//   bigint  -len(magic)      negative, marking the post-2018 format; absent in old files
-//   bytes   magic            "DUMPATOM" or "DUMPCUSTOM"
-//   int32   endian           0x0001
-//   int32   revision         0x0002
-//   bigint  ntimestep
-//   bigint  natoms
-//   int32   triclinic
-//   int32   boundary[3][2]
-//   double  bbox[3][2]
-//   double  tilt[3]          only when triclinic
-//   int32   size_one         values per atom
-//   int32   len; bytes       unit style        (revision >= 2)
-//   char    flag; double     simulation time   (revision >= 2, if flag set)
-//   int32   len; bytes       column names      (revision >= 2)
-//   int32   nchunk
-//   per chunk: int32 n; double[n]
 
 #include <algorithm>
 #include <cstring>
@@ -36,14 +13,11 @@ namespace {
 
 constexpr int32_t ENDIAN_MARKER = 0x0001;
 constexpr int32_t FORMAT_REVISION = 0x0002;
-/** LAMMPS caps a dump's per-atom value count well below this. */
 constexpr int32_t MAX_SIZE_ONE = 40;
 constexpr int64_t MAX_ATOMS = 100000000000LL;
 
-/** `dump atom` writes a fixed column set, and its coordinates are scaled. */
 constexpr const char* ATOM_STYLE_COLUMNS = "id type xs ys zs";
 
-/** A bounded reader over the mapped bytes that knows the file's integer conventions. */
 struct Cursor {
     const char* p;
     const char* end;
@@ -66,7 +40,6 @@ struct Cursor {
     bool readInt(int32_t& out) { return readRaw(out); }
     bool readDouble(double& out) { return readRaw(out); }
 
-    /** LAMMPS `bigint`: 64-bit in a default build, 32-bit in a small one. */
     bool readBigInt(int64_t& out) {
         if (wideBigInt) return readRaw(out);
         int32_t narrow = 0;
@@ -94,12 +67,10 @@ struct BinaryHeader {
     int32_t sizeOne = 0;
     int32_t chunkCount = 0;
     std::string columns;
-    /** Where the chunked atom data begins. */
     const char* body = nullptr;
     bool scaledCoords = false;
 };
 
-/** Applies the same tilt recovery as a text dump: the printed bbox is the inflated one. */
 void recoverBoxEdges(SimulationBox& box) {
     const double xy = box.xy, xz = box.xz, yz = box.yz;
     const double minX = std::min(std::min(0.0, xy), std::min(xz, xy + xz));
@@ -110,7 +81,6 @@ void recoverBoxEdges(SimulationBox& box) {
     box.yhi -= std::max(0.0, yz);
 }
 
-/** Splits the column-name string into lowercased names and maps the ones with meaning. */
 void applyColumns(const std::string& columns, BinaryHeader& parsed, ColumnMapping& cols) {
     const char* p = columns.c_str();
     const char* end = p + columns.size();
@@ -144,10 +114,6 @@ void applyColumns(const std::string& columns, BinaryHeader& parsed, ColumnMappin
     cols.computeMaxIdx();
 }
 
-/**
- * Reads one frame's header with the conventions the cursor was given, returning false the
- * moment anything fails a sanity check — which is how the right convention is found.
- */
 bool parseFrameHeader(Cursor cursor, BinaryHeader& parsed, ColumnMapping& cols) {
     int64_t timestep = 0;
     if (!cursor.readBigInt(timestep)) return false;
@@ -187,8 +153,6 @@ bool parseFrameHeader(Cursor cursor, BinaryHeader& parsed, ColumnMapping& cols) 
     }
 
     if (!boundaryLooksValid) {
-        // Pre-2018 files have no triclinic flag or boundary block; the bounding box starts
-        // where we thought the flag was.
         cursor.p = beforeBoundary;
         triclinic = -1;
         for (int axis = 0; axis < 3; axis++) {
@@ -220,7 +184,6 @@ bool parseFrameHeader(Cursor cursor, BinaryHeader& parsed, ColumnMapping& cols) 
             if (!cursor.readDouble(tilt[index])) return false;
             if (!std::isfinite(tilt[index])) tiltLooksValid = false;
         }
-        // A tilt cannot exceed the edge it shears.
         if (tiltLooksValid) {
             for (int axis = 0; axis < 3; axis++) {
                 const double span = bounds[axis][1] - bounds[axis][0];
@@ -269,8 +232,6 @@ bool parseFrameHeader(Cursor cursor, BinaryHeader& parsed, ColumnMapping& cols) 
     parsed.header.atomCount = (int)atomCount;
     parsed.header.box = box;
     for (int axis = 0; axis < 3; axis++) {
-        // 0 is LAMMPS's periodic style; anything else is one of the fixed/shrink-wrapped
-        // kinds, none of which wrap.
         parsed.header.periodic[axis] = boundary[axis][0] == 0 && boundary[axis][1] == 0;
     }
     deriveCellFromBox(parsed.header);
@@ -280,9 +241,6 @@ bool parseFrameHeader(Cursor cursor, BinaryHeader& parsed, ColumnMapping& cols) 
     parsed.body = cursor.p;
 
     if (columns.empty()) {
-        // Without a column string there is nothing to key columns by. `dump atom` has a
-        // fixed layout; for a custom dump the conventional leading columns are assumed and
-        // the rest are named positionally, which is the best that can be done here.
         columns = atomStyle ? ATOM_STYLE_COLUMNS : "id type x y z";
         for (int32_t extra = 5; extra < sizeOne; extra++) {
             columns += " column_" + std::to_string(extra);
@@ -295,7 +253,6 @@ bool parseFrameHeader(Cursor cursor, BinaryHeader& parsed, ColumnMapping& cols) 
     return cols.idxX >= 0 && cols.idxY >= 0 && cols.idxZ >= 0;
 }
 
-/** Walks the chunk table to find where a frame ends. */
 bool measureFrameBody(const BinaryHeader& parsed, const char* end, const char*& frameEnd) {
     const char* p = parsed.body;
 
@@ -314,14 +271,13 @@ bool measureFrameBody(const BinaryHeader& parsed, const char* end, const char*& 
     return true;
 }
 
-/** The four conventions a LAMMPS build might have written, in order of likelihood. */
 struct Convention {
     bool bigEndian;
     bool wideBigInt;
 };
 
 constexpr Convention CONVENTIONS[] = {
-    { false, true },   // little endian, 64-bit bigint: a default x86-64 build
+    { false, true },
     { false, false },
     { true, true },
     { true, false }
@@ -348,7 +304,7 @@ bool detectConvention(const MappedFile& file, size_t offset, Convention& convent
     return false;
 }
 
-} // namespace
+}
 
 bool sniff(const MappedFile& file) {
     Convention convention{};
@@ -429,8 +385,6 @@ bool readFrame(const MappedFile& file, const FrameIndexEntry& entry, const ReadO
     for (int extra = 0; extra < extraCount; extra++) {
         frame.extras[extra].name = cols.extraPropNames[extra];
         frame.extras[extra].values.resize((size_t)atomCount);
-        // Every value in a binary dump is a double on disk, so integrality is the only
-        // thing that can distinguish a categorical column from a continuous one.
         frame.extras[extra].dtype = ColumnDtype::Int32;
     }
 
@@ -460,8 +414,6 @@ bool readFrame(const MappedFile& file, const FrameIndexEntry& entry, const ReadO
                 }
             }
 
-            // Every value in a binary dump is already a double on disk, so nothing is
-            // narrowed before the write decides what the consumer wants.
             double x = fields[cols.idxX];
             double y = fields[cols.idxY];
             double z = fields[cols.idxZ];
@@ -494,7 +446,6 @@ bool readFrame(const MappedFile& file, const FrameIndexEntry& entry, const ReadO
     return true;
 }
 
-// See the note in lammps_dump_text.cpp: `extern` is what gives this external linkage.
 extern const FormatReader reader = {
     format_id::LammpsDumpBinary,
     sniff,
@@ -503,5 +454,5 @@ extern const FormatReader reader = {
     readFrame
 };
 
-} // namespace lammps_dump_binary
-} // namespace lammpsio
+}
+}

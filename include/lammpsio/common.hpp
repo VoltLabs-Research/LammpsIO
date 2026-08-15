@@ -25,16 +25,9 @@
 #include <lammpsio/external/fast_float.h>
 
 #if defined(_MSC_VER)
-    // MSVC has no __builtin_expect and no hot attribute. Branch hinting is dropped
-    // rather than faked: the expression keeps its meaning, only the hint is lost.
     #define UNLIKELY(x) (!!(x))
     #define ALWAYS_INLINE __forceinline
     #define HOT
-    // Deliberately empty rather than __restrict. MSVC keeps __restrict in the type, so a
-    // conditional between a plain pointer and a __restrict parameter has no common type
-    // and fails to compile (`return nl ? nl : end;` in findLineEnd). Since restrict is
-    // only an aliasing hint, dropping it on MSVC costs a little optimisation there and
-    // removes the whole class of error instead of casting it away one site at a time.
     #define RESTRICT
 #else
     #define UNLIKELY(x) __builtin_expect(!!(x), 0)
@@ -45,14 +38,6 @@
 
 namespace lammpsio {
 
-/**
- * Substring search over raw bytes, matching glibc/BSD `memmem`.
- *
- * Defined unconditionally, and aliased to `memmem` only where the platform lacks it, so
- * the fallback can be exercised on a platform that also has the real thing to compare
- * against. Skipping to the next candidate first byte with `memchr` keeps it close to
- * glibc's behaviour on the short needles the readers use ("lo", "atoms").
- */
 ALWAYS_INLINE const void* memmemFallback(
     const void* haystack,
     size_t haystackLength,
@@ -78,8 +63,6 @@ ALWAYS_INLINE const void* memmemFallback(
 }
 
 #if defined(_MSC_VER)
-// memmem is a GNU/BSD extension; MSVC ships no equivalent. Declared in this namespace so
-// the readers' unqualified calls resolve here without touching a single call site.
 ALWAYS_INLINE const void* memmem(
     const void* haystack,
     size_t haystackLength,
@@ -90,10 +73,6 @@ ALWAYS_INLINE const void* memmem(
 }
 #endif
 
-/**
- * A read-only memory mapping of a whole file. Readers only ever touch `data`, `size`
- * and `valid`; the handles are an implementation detail and differ per platform.
- */
 struct MappedFile {
     const char* data;
     size_t size;
@@ -111,8 +90,6 @@ struct MappedFile {
 ALWAYS_INLINE MappedFile mapFile(const char* filepath) {
     MappedFile f = {nullptr, 0, INVALID_HANDLE_VALUE, nullptr, false};
 
-    // FILE_FLAG_SEQUENTIAL_SCAN is the counterpart of the MADV_SEQUENTIAL advice the
-    // POSIX path gives: it tells the cache manager to read ahead and not retain pages.
     f.file = CreateFileA(
         filepath,
         GENERIC_READ,
@@ -131,7 +108,6 @@ ALWAYS_INLINE MappedFile mapFile(const char* filepath) {
         return f;
     }
 
-    // A zero-length file cannot be mapped on Windows, and has nothing to read anyway.
     if (UNLIKELY(fileSize.QuadPart == 0)) {
         CloseHandle(f.file);
         f.file = INVALID_HANDLE_VALUE;
@@ -197,7 +173,6 @@ ALWAYS_INLINE MappedFile mapFile(const char* filepath) {
         return f;
     }
 
-    // Advise kernel for sequential access and preload
     madvise((void*)f.data, f.size, MADV_SEQUENTIAL | MADV_WILLNEED);
 
     f.valid = true;
@@ -243,19 +218,12 @@ HOT ALWAYS_INLINE int fastAtoi(const char* RESTRICT p, const char* RESTRICT end)
     return sign * result;
 }
 
-// Per-column dtype carried alongside extra dump properties. The daemon maps these
-// strings ('i32'/'f32') straight onto Int32Array/Float32Array, so they must match
-// the shared @voltstack/volt-shared ColumnDType union.
 enum class ColumnDtype { Int32, Float32 };
 
 ALWAYS_INLINE const char* columnDtypeString(ColumnDtype dtype) {
     return dtype == ColumnDtype::Int32 ? "i32" : "f32";
 }
 
-// True only when the whole token is integer-formatted: an optional sign followed by
-// one or more digits and nothing else. Any '.', 'e'/'E', 'n'/'i' (nan/inf) makes it
-// false. This is the dtype discriminator: a categorical "2" is integer-formatted,
-// a continuous "2.0" is not — value integrality alone cannot tell them apart.
 HOT ALWAYS_INLINE bool isIntegerToken(const char* RESTRICT p, const char* RESTRICT end) {
     if (UNLIKELY(p >= end)) return false;
     if (*p == '+' || *p == '-') p++;
@@ -269,7 +237,6 @@ HOT ALWAYS_INLINE bool isIntegerToken(const char* RESTRICT p, const char* RESTRI
 }
 
 HOT ALWAYS_INLINE const char* skipWhitespace(const char* RESTRICT p, const char* RESTRICT end) {
-    // Unrolled loop for common case
     while (p < end && *p <= ' ') p++;
     return p;
 }
@@ -279,12 +246,8 @@ HOT ALWAYS_INLINE const char* findTokenEnd(const char* RESTRICT p, const char* R
     return p;
 }
 
-// Both clamp when p has already run past end: a truncated frame can leave a cursor
-// beyond the mapping, and `end - p` would then be a huge unsigned length handed to
-// memchr.
 ALWAYS_INLINE const char* jumpToNextLine(const char* RESTRICT p, const char* RESTRICT end) {
     if (UNLIKELY(p >= end)) return end;
-    // memchr keeps this cache-efficient on long lines.
     const char* nl = (const char*)memchr(p, '\n', (size_t)(end - p));
     return nl ? nl + 1 : end;
 }
@@ -327,19 +290,13 @@ struct SimulationBox {
     double xlo, xhi;
     double ylo, yhi;
     double zlo, zhi;
-    // Triclinic tilt factors (0 for orthogonal cells). For scaled-coordinate
-    // dumps these are needed to map fractional positions back to Cartesian.
     double xy = 0.0, xz = 0.0, yz = 0.0;
 };
 
-// Recognizes exactly the LAMMPS per-atom position column names for one axis:
-// x, xu (unwrapped), xs (scaled), xsu (scaled+unwrapped) — and the y/z forms.
-// `head` points at the axis letter (already known to be x/y/z), `len` is the
-// full token length. Rejects look-alikes like "xy" (a tilt label) or "vx".
 ALWAYS_INLINE bool isPositionColumn(const char* head, size_t len) {
-    if (len == 1) return true;                 // x / y / z
-    if (len == 2) return head[1] == 'u' || head[1] == 's';   // xu / xs
-    if (len == 3) return head[1] == 's' && head[2] == 'u';   // xsu
+    if (len == 1) return true;
+    if (len == 2) return head[1] == 'u' || head[1] == 's';
+    if (len == 3) return head[1] == 's' && head[2] == 'u';
     return false;
 }
 
@@ -350,10 +307,6 @@ struct ColumnMapping {
     int idxY = -1;
     int idxZ = -1;
     int maxIdx = 0;
-    // True when the position columns are LAMMPS *scaled* coordinates (xs/ys/zs),
-    // i.e. fractions of the box in [0,1]. They must be mapped to Cartesian using
-    // the box bounds + tilt factors before use. Unscaled (x/xu/y/yu/z/zu) stay
-    // as-is. All three axes share one flag — LAMMPS never mixes styles.
     bool scaledCoords = false;
     
     std::vector<int> extraPropIndices;
@@ -375,19 +328,16 @@ ALWAYS_INLINE void detectDataColumnStyle(int colCount, ColumnMapping& cols) {
     cols.idxId = 0;
     
     if (colCount >= 7) {
-        // Full: id mol type charge x y z
         cols.idxType = 2;
         cols.idxX = 4;
         cols.idxY = 5;
         cols.idxZ = 6;
     } else if (colCount == 6) {
-        // Charge: id type charge x y z
         cols.idxType = 1;
         cols.idxX = 3;
         cols.idxY = 4;
         cols.idxZ = 5;
     } else {
-        // Atomic: id type x y z (default)
         cols.idxType = 1;
         cols.idxX = 2;
         cols.idxY = 3;
@@ -396,4 +346,4 @@ ALWAYS_INLINE void detectDataColumnStyle(int colCount, ColumnMapping& cols) {
     cols.computeMaxIdx();
 }
 
-} // namespace lammpsio
+}

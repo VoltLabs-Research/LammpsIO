@@ -1,12 +1,3 @@
-// Proves the static library is usable from plain C++: no Node, no npm, just a link.
-//
-// Reads every committed fixture through the public API and prints what it found, so the
-// output can be eyeballed against the Node tests and against OVITO. Exits non-zero on the
-// first disagreement with what the fixtures are known to contain.
-//
-//   cmake -B build-cpp -DLAMMPSIO_BUILD_TESTS=ON && cmake --build build-cpp
-//   ./build-cpp/lammpsio_smoke test/fixtures
-
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -22,7 +13,6 @@ struct Expectation {
     int atomCount;
 };
 
-/** What the committed fixtures hold, per the Node suite and the OVITO oracle. */
 const Expectation EXPECTED[] = {
     { "dump-ortho-3frames.dump",      "lammps-dump",        3, 4 },
     { "dump-triclinic-scaled.dump",   "lammps-dump",        1, 3 },
@@ -44,7 +34,7 @@ void check(bool condition, const std::string& what) {
     failures++;
 }
 
-} // namespace
+}
 
 int main(int argc, char** argv) {
     const std::string root = argc > 1 ? argv[1] : "test/fixtures";
@@ -67,8 +57,6 @@ int main(int argc, char** argv) {
             continue;
         }
 
-        // float64 positions: the precision an analysis pipeline needs, and the reason the
-        // allocator is an interface rather than a fixed buffer.
         lammpsio::VectorFrameAllocator allocator(lammpsio::PositionPrecision::Float64);
         lammpsio::ParsedFrame frame;
         lammpsio::ReadOptions options;
@@ -100,7 +88,6 @@ int main(int argc, char** argv) {
               std::string(expected.file) + ": type buffer size");
     }
 
-    // A file nothing recognizes must be a clean "no", not a crash or a guess.
     {
         std::string error;
         const std::string path = root + "/../cpp/smoke.cpp";

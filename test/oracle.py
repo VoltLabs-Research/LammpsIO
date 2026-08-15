@@ -21,11 +21,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 FIXTURES = os.path.join(HERE, 'fixtures')
 OUTPUT = os.path.join(HERE, 'oracle.json')
 
-# Properties OVITO exposes under its own display names; everything else in a frame is
-# recorded under the column name the file used.
 RENAMED = {
-    'Position': None,          # handled explicitly
-    'Particle Type': None,     # handled explicitly
+    'Position': None,
+    'Particle Type': None,
     'Particle Identifier': None,
 }
 
@@ -37,8 +35,6 @@ def frame_record(data):
         'natoms': int(particles.count),
         'positions': [[round(float(c), 5) for c in p] for p in particles.positions],
         'types': [int(t) for t in particles.particle_types],
-        # A file that declares no cell gets none from OVITO — a plain XYZ, for instance.
-        # Recorded as null rather than invented, so the comparison can say so.
         'cell': None,
         'pbc': None,
         'properties': {},
