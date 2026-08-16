@@ -9,8 +9,6 @@
 namespace lammpsio {
 namespace lammps_dump_yaml {
 
-namespace {
-
 struct HeaderScan {
     FrameHeader header;
     ColumnMapping cols;
@@ -169,13 +167,6 @@ HeaderScan parseHeader(const char* RESTRICT data, const char* RESTRICT end) {
     scan.valid = scan.dataSection != nullptr && boxSeen &&
                  scan.cols.idxX >= 0 && scan.cols.idxY >= 0 && scan.cols.idxZ >= 0;
     return scan;
-}
-
-const char* frameEndPointer(const MappedFile& file, const FrameIndexEntry& entry) {
-    const size_t end = entry.byteOffset + entry.byteLength;
-    return file.data + (end > file.size ? file.size : end);
-}
-
 }
 
 bool sniff(const MappedFile& file) {

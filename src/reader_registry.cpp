@@ -11,8 +11,6 @@ namespace lammps_dump_yaml { extern const FormatReader reader; }
 namespace lammps_data { extern const FormatReader reader; }
 namespace extxyz { extern const FormatReader reader; }
 
-namespace {
-
 const std::vector<const FormatReader*>& readerTable() {
     static const std::vector<const FormatReader*> table = {
         &lammps_dump_text::reader,
@@ -56,8 +54,6 @@ bool locateFrame(const char* path, int frameIndex, const ScopedMappedFile& mappe
 
     entry = frames[(size_t)frameIndex];
     return true;
-}
-
 }
 
 const std::vector<const FormatReader*>& readers() {

@@ -9,8 +9,6 @@
 namespace lammpsio {
 namespace extxyz {
 
-namespace {
-
 constexpr const char* SPECIES_NAMES[] = { "species", "type", "element", "atom_types" };
 
 struct ColumnSpec {
@@ -211,13 +209,6 @@ HeaderScan parseHeader(const char* RESTRICT data, const char* RESTRICT end) {
     scan.header.headers = scan.layout.headers;
     scan.valid = scan.layout.cols.idxX >= 0 && scan.layout.cols.idxY >= 0 && scan.layout.cols.idxZ >= 0;
     return scan;
-}
-
-const char* frameEndPointer(const MappedFile& file, const FrameIndexEntry& entry) {
-    const size_t end = entry.byteOffset + entry.byteLength;
-    return file.data + (end > file.size ? file.size : end);
-}
-
 }
 
 bool sniff(const MappedFile& file) {

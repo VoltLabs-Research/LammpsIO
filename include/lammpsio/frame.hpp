@@ -80,6 +80,11 @@ struct FrameIndexEntry {
     int atomCount = 0;
 };
 
+ALWAYS_INLINE const char* frameEndPointer(const MappedFile& file, const FrameIndexEntry& entry) {
+    const size_t end = entry.byteOffset + entry.byteLength;
+    return file.data + (end > file.size ? file.size : end);
+}
+
 struct FrameBuffers {
     float* positions32 = nullptr;
     double* positions64 = nullptr;

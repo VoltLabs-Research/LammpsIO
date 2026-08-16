@@ -9,8 +9,6 @@
 namespace lammpsio {
 namespace lammps_dump_text {
 
-namespace {
-
 constexpr int MULTITHREAD_ATOM_THRESHOLD = 50000;
 
 ALWAYS_INLINE bool isItemLine(const char* content, const char* lineEnd) {
@@ -272,13 +270,6 @@ int countAtomsInChunk(const char* start, const char* end, const char* globalEnd)
     }
 
     return count;
-}
-
-const char* frameEndPointer(const MappedFile& file, const FrameIndexEntry& entry) {
-    const size_t end = entry.byteOffset + entry.byteLength;
-    return file.data + (end > file.size ? file.size : end);
-}
-
 }
 
 bool sniff(const MappedFile& file) {

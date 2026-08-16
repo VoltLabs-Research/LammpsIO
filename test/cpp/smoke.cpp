@@ -4,8 +4,6 @@
 #include <vector>
 #include <lammpsio/reader_registry.hpp>
 
-namespace {
-
 struct Expectation {
     const char* file;
     const char* format;
@@ -26,14 +24,12 @@ const Expectation EXPECTED[] = {
     { "xyz-plain.xyz",                "extxyz",             1, 4 }
 };
 
-int failures = 0;
+static int failures = 0;
 
 void check(bool condition, const std::string& what) {
     if (condition) return;
     std::printf("  FAIL: %s\n", what.c_str());
     failures++;
-}
-
 }
 
 int main(int argc, char** argv) {

@@ -9,8 +9,6 @@
 namespace lammpsio {
 namespace lammps_dump_binary {
 
-namespace {
-
 constexpr int32_t ENDIAN_MARKER = 0x0001;
 constexpr int32_t FORMAT_REVISION = 0x0002;
 constexpr int32_t MAX_SIZE_ONE = 40;
@@ -302,8 +300,6 @@ bool detectConvention(const MappedFile& file, size_t offset, Convention& convent
     }
 
     return false;
-}
-
 }
 
 bool sniff(const MappedFile& file) {

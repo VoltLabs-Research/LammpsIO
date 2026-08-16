@@ -6,8 +6,6 @@
 namespace lammpsio {
 namespace lammps_data {
 
-namespace {
-
 constexpr size_t HEADER_SCAN_LIMIT = 8192;
 
 struct AtomStyleLayout {
@@ -260,8 +258,6 @@ int countColumns(const char* p, const char* end) {
     }
 
     return columns;
-}
-
 }
 
 bool sniff(const MappedFile& file) {

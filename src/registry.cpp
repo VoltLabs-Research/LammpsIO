@@ -4,8 +4,6 @@
 #include "napi_bridge.hpp"
 #include <lammpsio/reader_registry.hpp>
 
-namespace {
-
 struct CallArgs {
     std::string path;
     lammpsio::ReadOptions options;
@@ -100,8 +98,6 @@ void exportFunction(napi_env env, napi_value exports, const char* name, napi_cal
     napi_value fn;
     napi_create_function(env, name, NAPI_AUTO_LENGTH, callback, nullptr, &fn);
     napi_set_named_property(env, exports, name, fn);
-}
-
 }
 
 static napi_value Init(napi_env env, napi_value exports) {
